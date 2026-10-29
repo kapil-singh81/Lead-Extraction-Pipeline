@@ -33,9 +33,10 @@
       "--window-size=1920,1080"
     ],
     "target_queries": [
-      "commercial roofer Dallas TX"
+      "commercial roofer Plano TX",
+      "Apple Park Visitor Center Cupertino CA"
     ],
-    "max_results_per_query": 60,
+    "max_results_per_query": 5,
     "max_consecutive_empty_scrolls": 5,
     "scroll_delay_min_ms": 1200,
     "scroll_delay_max_ms": 2800,

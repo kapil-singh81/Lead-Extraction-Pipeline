@@ -30,7 +30,9 @@
     "scroll_delay_max_ms": 2800,
     "navigation_timeout_ms": 30000,
     "detail_pane_timeout_ms": 2500,
-    "scroll_amount_px": 900,
+    "scroll_amount_px": 450,
+    "search_url_template": "https://www.google.com/maps/search/{query}?hl=en",
+    "default_phone_prefix": "+1",
     "query_cooldown_min_ms": 2500,
     "query_cooldown_max_ms": 5000,
     "lead_origin": "c1_google_maps",
@@ -41,6 +43,8 @@
         "button[aria-label*='Agree']"
       ],
       "feed_container": "div[role='feed']",
+      "single_result_container": "div[role='main']",
+      "card_place_link": "a[href*='/maps/place/'], a.hfpxzc",
       "listing_card": "div[role='feed'] div.Nv2PK, div[role='feed'] div[role='article']",
       "business_name": ".qBF1Pd, div.fontHeadlineSmall",
       "rating_aria": "span[role='img'][aria-label*='stars'], span[aria-label*='stars']",
@@ -51,6 +55,7 @@
       "detail_pane_title": "h1.DUwDvf",
       "detail_pane_website": "a[data-item-id='authority'], a[aria-label*='Website' i], a[aria-label*='website' i]",
       "detail_pane_phone": "[data-item-id^='phone:tel:'], button[aria-label*='Phone:' i], [data-tooltip*='Copy phone']",
+      "detail_pane_phone_aria": "button[aria-label*='Phone:' i]",
       "end_of_list_marker": "span.HlvSq, div.m6QErb div.fontBodyMedium"
     }
   },

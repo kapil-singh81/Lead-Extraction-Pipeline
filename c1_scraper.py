@@ -39,17 +39,20 @@ def clean_website_url(raw_url):
         return raw_url, None
 
 
-def clean_phone_number(raw_phone):
+def clean_phone_number(raw_phone, default_prefix="+1"):
     """Normalizes phone string into E.164-like digits with leading plus."""
     if not raw_phone:
         return None
     cleaned = re.sub(r"[^\d+]", "", raw_phone.strip())
     if len(cleaned) < 7:
         return None
+    prefix = default_prefix if default_prefix.startswith("+") else f"+{default_prefix}"
     if len(cleaned) == 10 and not cleaned.startswith("+"):
-        cleaned = f"+1{cleaned}"
-    elif len(cleaned) == 11 and cleaned.startswith("1"):
+        cleaned = f"{prefix}{cleaned}"
+    elif len(cleaned) == 11 and cleaned.startswith("1") and prefix == "+1":
         cleaned = f"+{cleaned}"
+    elif not cleaned.startswith("+"):
+        cleaned = f"{prefix}{cleaned}"
     return cleaned
 
 
@@ -95,20 +98,138 @@ async def handle_consent(page: Page, selectors: dict) -> None:
             continue
 
 
-async def scrape_single_query(page: Page, query: str, config: dict) -> int:
+async def extract_single_result(page: Page, query: str, config: dict) -> int:
     """
-    Executes a single Maps search query, scrolls the virtualized feed,
-    deduplicates against SQLite, and stages new leads into 'Today'.
+    Path B: Extracts business details when Google Maps navigates directly
+    to a single-business view (bypassing div[role='feed']).
     """
     scraper_cfg = config["scraper_c1"]
     selectors = scraper_cfg["selectors"]
     db_path = config["app"]["db_path"]
     target_country = config["app"]["target_country"]
-    lead_origin = scraper_cfg["lead_origin"]
-    scroll_px = scraper_cfg["scroll_amount_px"]
+    lead_origin = scraper_cfg.get("lead_origin", "c1_google_maps")
+    default_prefix = scraper_cfg.get("default_phone_prefix", "+1")
 
+    logging.info(f"Direct single-result business view detected for query: '{query}'")
+
+    # Extract business title from detail pane
+    title_sel = selectors.get("detail_pane_title", "h1.DUwDvf")
+    name_elem = page.locator(title_sel).first
+    business_name = None
+    try:
+        if await name_elem.count() > 0:
+            business_name = (await name_elem.inner_text()).strip()
+    except Exception:
+        pass
+
+    if not business_name:
+        doc_title = await page.title()
+        business_name = doc_title.split(" - Google Maps")[0].strip() if " - Google Maps" in doc_title else doc_title.strip()
+
+    if not business_name:
+        logging.warning("Could not extract business name from single-result view.")
+        return 0
+
+    maps_url = page.url
+    place_id = extract_place_id(maps_url)
+
+    # Extract rating & review count
+    rating = 0.0
+    review_count = 0
+    rating_sel = selectors.get("rating_aria", "span[role='img'][aria-label*='stars'], span[aria-label*='stars']")
+    rating_elem = page.locator(rating_sel).first
+    if await rating_elem.count() > 0:
+        aria_text = (await rating_elem.get_attribute("aria-label")) or ""
+        r_match = re.search(r"([0-9.]+)\s*star", aria_text)
+        if r_match:
+            try:
+                rating = float(r_match.group(1))
+            except ValueError:
+                pass
+
+    rev_sel = selectors.get("review_count", "span.UY7F9, span[aria-label*='reviews'], span[aria-label*='review']")
+    review_elem = page.locator(rev_sel).first
+    if await review_elem.count() > 0:
+        rev_text = (await review_elem.get_attribute("aria-label")) or (await review_elem.inner_text())
+        rev_match = re.search(r"([0-9,]+)", rev_text)
+        if rev_match:
+            review_count = int(rev_match.group(1).replace(",", ""))
+
+    # Extract website
+    website_url = None
+    clean_domain = None
+    authority_sel = selectors.get("detail_pane_website", "a[data-item-id='authority']")
+    authority_btn = page.locator(authority_sel).first
+    if await authority_btn.count() > 0:
+        raw_href = await authority_btn.get_attribute("href")
+        website_url, clean_domain = clean_website_url(raw_href)
+
+    # Extract phone
+    phone = None
+    phone_sel = selectors.get("detail_pane_phone", "[data-item-id^='phone:tel:']")
+    phone_btn = page.locator(phone_sel).first
+    if await phone_btn.count() > 0:
+        data_id = (await phone_btn.get_attribute("data-item-id")) or ""
+        if "phone:tel:" in data_id:
+            phone = data_id.split("phone:tel:")[-1].strip()
+    if not phone:
+        phone_aria_sel = selectors.get("detail_pane_phone_aria", "button[aria-label*='Phone:' i]")
+        p_loc = page.locator(phone_aria_sel).first
+        if await p_loc.count() > 0:
+            aria = (await p_loc.get_attribute("aria-label")) or ""
+            m = re.search(r"(\+?[0-9\s\-\(\)]{8,18}[0-9])", aria)
+            if m:
+                phone = m.group(1).strip()
+
+    clean_phone = clean_phone_number(phone, default_prefix)
+
+    # Deduplication check against SQLite
+    if database.is_duplicate(clean_domain=clean_domain, maps_place_id=place_id, clean_phone=clean_phone, db_path=db_path):
+        logging.info(f"Duplicate skipped (single match): '{business_name}' ({clean_domain or place_id})")
+        return 0
+
+    niche, city = parse_niche_and_city(query, target_country)
+    lead_payload = {
+        "business_name": business_name,
+        "niche": niche,
+        "city": city,
+        "country": target_country,
+        "maps_place_id": place_id,
+        "maps_url": maps_url,
+        "rating": rating,
+        "review_count": review_count,
+        "clean_domain": clean_domain,
+        "website_url": website_url,
+        "phone": phone.strip() if phone else None,
+        "clean_phone": clean_phone,
+        "lead_origin_pipeline": lead_origin,
+        "search_query_raw": query,
+        "primary_status": "Today",
+        "sub_status": "Pending Evaluation"
+    }
+
+    database.insert_lead(lead_payload, db_path=db_path)
+    logging.info(f"[+] Saved Single-Result: '{business_name}' | Site: {clean_domain} | Phone: {clean_phone}")
+    return 1
+
+
+async def scrape_single_query(page: Page, query: str, config: dict) -> int:
+    """
+    Executes a single Maps search query with dual-layout detection:
+    - Path A: Multi-result feed scroll (div[role='feed'])
+    - Path B: Direct single-result business view (div[role='main'])
+    """
+    scraper_cfg = config["scraper_c1"]
+    selectors = scraper_cfg["selectors"]
+    db_path = config["app"]["db_path"]
+    target_country = config["app"]["target_country"]
+    lead_origin = scraper_cfg.get("lead_origin", "c1_google_maps")
+    scroll_px = scraper_cfg.get("scroll_amount_px", 450)
+    default_prefix = scraper_cfg.get("default_phone_prefix", "+1")
+
+    url_template = scraper_cfg.get("search_url_template", "https://www.google.com/maps/search/{query}?hl=en")
     encoded_query = urllib.parse.quote_plus(query)
-    search_url = f"https://www.google.com/maps/search/{encoded_query}?hl=en"
+    search_url = url_template.format(query=encoded_query)
 
     logging.info(f"Opening Maps query: '{query}'")
     try:
@@ -119,18 +240,37 @@ async def scrape_single_query(page: Page, query: str, config: dict) -> int:
 
     await handle_consent(page, selectors)
 
-    feed_selector = selectors["feed_container"]
+    feed_selector = selectors.get("feed_container", "div[role='feed']")
+    single_selector = selectors.get("single_result_container", "div[role='main']")
+    combined_target = f"{feed_selector}, {single_selector}"
+
     try:
-        await page.wait_for_selector(feed_selector, timeout=10000)
+        await page.wait_for_selector(combined_target, timeout=10000)
     except Exception:
-        logging.warning(f"No feed container found for '{query}'. Might have 0 results or direct business view.")
+        logging.warning(f"No feed or single business container found for '{query}'. Might have 0 results.")
         return 0
 
+    # Determine layout mode: Feed vs Single Result
+    is_feed = False
+    feed_loc = page.locator(feed_selector)
+    if await feed_loc.count() > 0 and await feed_loc.first.is_visible():
+        is_feed = True
+
+    if not is_feed:
+        # Path B: Single result exact match
+        single_loc = page.locator(single_selector)
+        if await single_loc.count() > 0 and await single_loc.first.is_visible():
+            return await extract_single_result(page, query, config)
+        logging.warning(f"Neither feed nor single result view active for '{query}'.")
+        return 0
+
+    # Path A: Multi-result virtualized feed scroll
     seen_card_keys = set()
     consecutive_empty_scrolls = 0
     total_saved_for_query = 0
     max_results = scraper_cfg["max_results_per_query"]
     max_empty_scrolls = scraper_cfg["max_consecutive_empty_scrolls"]
+    card_place_sel = selectors.get("card_place_link", "a[href*='/maps/place/'], a.hfpxzc")
 
     while total_saved_for_query < max_results and consecutive_empty_scrolls < max_empty_scrolls:
         cards = await page.locator(selectors["listing_card"]).all()
@@ -144,7 +284,7 @@ async def scrape_single_query(page: Page, query: str, config: dict) -> int:
                 # Extract Maps URL and Place ID
                 maps_url = await card.get_attribute("href")
                 if not maps_url:
-                    anchor = card.locator("a[href*='/maps/place/']").first
+                    anchor = card.locator(card_place_sel).first
                     if await anchor.count() > 0:
                         maps_url = await anchor.get_attribute("href")
 
@@ -203,13 +343,14 @@ async def scrape_single_query(page: Page, query: str, config: dict) -> int:
                     if phone_match:
                         phone = phone_match.group(1)
 
-                # Tier 2: Automatic Detail Pane Fallback (for medical, legal, and compact card layouts)
+                # Tier 2: Automatic Detail Pane Fallback (for compact card layouts)
                 if not website_url or not phone:
                     click_target = card.locator(selectors.get("card_click_anchor", "a.hfpxzc")).first
                     if await click_target.count() > 0:
                         try:
                             current_h1 = ""
-                            title_loc = page.locator(selectors.get("detail_pane_title", "h1.DUwDvf"))
+                            title_sel = selectors.get("detail_pane_title", "h1.DUwDvf")
+                            title_loc = page.locator(title_sel)
                             if await title_loc.count() > 0:
                                 current_h1 = (await title_loc.first.inner_text()).strip()
 
@@ -219,15 +360,15 @@ async def scrape_single_query(page: Page, query: str, config: dict) -> int:
                             try:
                                 clean_expected = re.sub(r"[^a-zA-Z0-9]", "", business_name).lower()[:8]
                                 await page.wait_for_function(
-                                    """({oldName, exp}) => {
-                                        const el = document.querySelector('h1.DUwDvf');
+                                    """({oldName, exp, sel}) => {
+                                        const el = document.querySelector(sel);
                                         if (!el) return false;
                                         const txt = el.textContent.trim();
                                         const cleanTxt = txt.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
                                         if (txt === oldName) return false;
                                         return cleanTxt.includes(exp) || exp.includes(cleanTxt.slice(0, 6));
                                     }""",
-                                    {"oldName": current_h1, "exp": clean_expected},
+                                    {"oldName": current_h1, "exp": clean_expected, "sel": title_sel},
                                     timeout=scraper_cfg.get("detail_pane_timeout_ms", 2500)
                                 )
                             except Exception:
@@ -248,7 +389,8 @@ async def scrape_single_query(page: Page, query: str, config: dict) -> int:
                                     if "phone:tel:" in data_id:
                                         phone = data_id.split("phone:tel:")[-1].strip()
                                 if not phone:
-                                    p_loc = page.locator("button[aria-label*='Phone:' i]").first
+                                    phone_aria_sel = selectors.get("detail_pane_phone_aria", "button[aria-label*='Phone:' i]")
+                                    p_loc = page.locator(phone_aria_sel).first
                                     if await p_loc.count() > 0:
                                         aria = (await p_loc.get_attribute("aria-label")) or ""
                                         m = re.search(r"(\+?[0-9\s\-\(\)]{8,18}[0-9])", aria)
@@ -257,7 +399,7 @@ async def scrape_single_query(page: Page, query: str, config: dict) -> int:
                         except Exception as pane_err:
                             logging.debug(f"Detail pane extraction error for '{business_name}': {pane_err}")
 
-                clean_phone = clean_phone_number(phone)
+                clean_phone = clean_phone_number(phone, default_prefix)
 
                 # Deduplication Check against SQLite Master Archive
                 if database.is_duplicate(clean_domain=clean_domain, maps_place_id=place_id, clean_phone=clean_phone, db_path=db_path):
@@ -266,7 +408,7 @@ async def scrape_single_query(page: Page, query: str, config: dict) -> int:
 
                 niche, city = parse_niche_and_city(query, target_country)
 
-                # Stage New Record into SQLite
+                # Stage New Record immediately into SQLite
                 lead_payload = {
                     "business_name": business_name,
                     "niche": niche,
@@ -306,7 +448,7 @@ async def scrape_single_query(page: Page, query: str, config: dict) -> int:
         else:
             consecutive_empty_scrolls += 1
 
-        # Humanized randomized scroll down inside div[role="feed"]
+        # Smooth randomized scroll down inside div[role="feed"]
         await page.evaluate("""(args) => {
             const el = document.querySelector(args.sel);
             if (el) el.scrollBy(0, args.px);

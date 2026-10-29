@@ -1,0 +1,19 @@
+# Environments
+venv/
+.venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Chrome user profile and temporary files
+chrome_lead_profile/
+*.log
+
+# Sensitive service account credentials
+credentials.json
+
+# Local SQLite databases (uncomment if you do not want to track runtime db)
+# *.db

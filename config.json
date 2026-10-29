@@ -1,0 +1,108 @@
+{
+  "app": {
+    "db_path": "lead_pipeline.db",
+    "target_country": "US",
+    "log_level": "INFO"
+  },
+  "scraper_c1": {
+    "browser_channel": "chrome",
+    "headless": false,
+    "user_data_dir": "./chrome_lead_profile",
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "launch_args": [
+      "--disable-blink-features=AutomationControlled",
+      "--no-sandbox",
+      "--disable-infobars",
+      "--disable-dev-shm-usage",
+      "--disable-browser-side-navigation",
+      "--disable-features=IsolateOrigins,site-per-process",
+      "--window-size=1920,1080"
+    ],
+    "target_queries": [
+      "commercial roofer Dallas TX"
+    ],
+    "max_results_per_query": 60,
+    "max_consecutive_empty_scrolls": 5,
+    "scroll_delay_min_ms": 1200,
+    "scroll_delay_max_ms": 2800,
+    "navigation_timeout_ms": 30000,
+    "detail_pane_timeout_ms": 2500,
+    "scroll_amount_px": 900,
+    "query_cooldown_min_ms": 2500,
+    "query_cooldown_max_ms": 5000,
+    "lead_origin": "c1_google_maps",
+    "selectors": {
+      "consent_accept_buttons": [
+        "button[aria-label*='Accept all']",
+        "form[action*='consent'] button",
+        "button[aria-label*='Agree']"
+      ],
+      "feed_container": "div[role='feed']",
+      "listing_card": "div[role='feed'] div.Nv2PK, div[role='feed'] div[role='article']",
+      "business_name": ".qBF1Pd, div.fontHeadlineSmall",
+      "rating_aria": "span[role='img'][aria-label*='stars'], span[aria-label*='stars']",
+      "review_count": "span.UY7F9, span[aria-label*='reviews'], span[aria-label*='review']",
+      "website_button": "a[data-value='Website'], a[aria-label*='website' i], a[aria-label*='Website']",
+      "phone_button": "span.UsdlK, button[data-tooltip*='phone'], button[data-item-id*='phone']",
+      "card_click_anchor": "a.hfpxzc",
+      "detail_pane_title": "h1.DUwDvf",
+      "detail_pane_website": "a[data-item-id='authority'], a[aria-label*='Website' i], a[aria-label*='website' i]",
+      "detail_pane_phone": "[data-item-id^='phone:tel:'], button[aria-label*='Phone:' i], [data-tooltip*='Copy phone']",
+      "end_of_list_marker": "span.HlvSq, div.m6QErb div.fontBodyMedium"
+    }
+  },
+  "auditor": {
+    "concurrency_limit": 5,
+    "headless_args": ["--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"],
+    "page_timeout_ms": 15000,
+    "mobile_viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "thresholds": {
+      "max_load_time_seconds": 4.5,
+      "max_ttfb_ms": 1500,
+      "max_page_weight_mb": 5.0,
+      "max_dom_nodes": 1800
+    },
+    "decision_maker_keywords": [
+      "owner",
+      "founder",
+      "co-founder",
+      "director",
+      "managing director",
+      "ceo",
+      "principal",
+      "president",
+      "managing partner",
+      "proprietor"
+    ],
+    "generic_email_prefixes": [
+      "info@",
+      "contact@",
+      "sales@",
+      "support@",
+      "admin@",
+      "office@",
+      "hello@",
+      "team@",
+      "help@",
+      "billing@",
+      "enquiry@"
+    ]
+  },
+  "sheets": {
+    "credentials_file": "credentials.json",
+    "spreadsheet_id": "12h3Mixc5vN-Dh951lIepWKjf0sDE8Z5-4THhtyGjh5w",
+    "tabs": {
+      "today": "Today",
+      "outreach_ready": "Outreach Ready",
+      "missing_info": "Missing Info",
+      "disqualified": "Disqualified",
+      "archive": "Archive"
+    }
+  }
+}

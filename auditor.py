@@ -140,7 +140,7 @@ async def audit_single_site(
         page.on("response", on_response)
 
         try:
-            await page.goto(url, timeout=auditor_cfg.get("page_timeout_ms", 15000), wait_until="load")
+            await page.goto(url, timeout=auditor_cfg.get("page_timeout_ms", 15000), wait_until="domcontentloaded")
             await page.wait_for_timeout(800)
 
             metrics = await page.evaluate("""() => {

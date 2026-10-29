@@ -1,17 +1,31 @@
+import json
 import sqlite3
 import uuid
 from typing import Optional, Dict, Any, List
 
 
-def get_connection(db_path: str) -> sqlite3.Connection:
+def get_default_config() -> Dict[str, Any]:
+    """Loads default configuration from config.json if present."""
+    try:
+        with open("config.json", "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def get_connection(db_path: Optional[str] = None) -> sqlite3.Connection:
     """Creates a database connection with dict-like row access and concurrency timeout."""
+    if not db_path:
+        db_path = get_default_config().get("app", {}).get("db_path", "lead_pipeline.db")
     conn = sqlite3.connect(db_path, timeout=30.0)
     conn.row_factory = sqlite3.Row
     return conn
 
 
-def init_db(db_path: str) -> None:
+def init_db(db_path: Optional[str] = None) -> None:
     """Initializes tables, WAL mode, and indexes for the lead extraction pipeline."""
+    if not db_path:
+        db_path = get_default_config().get("app", {}).get("db_path", "lead_pipeline.db")
     conn = get_connection(db_path)
     try:
         with conn:
@@ -81,7 +95,14 @@ def is_duplicate(
     """
     Checks if an entity already exists in the database.
     Evaluates Domain -> Maps Place ID -> Phone.
+    Reads excluded_domains from config.json dynamically if not provided.
     """
+    if not db_path:
+        db_path = get_default_config().get("app", {}).get("db_path", "lead_pipeline.db")
+
+    if excluded_domains is None:
+        excluded_domains = get_default_config().get("app", {}).get("excluded_domains", [])
+
     ignored_domains = set(d.lower() for d in excluded_domains) if excluded_domains else set()
     conn = get_connection(db_path)
     try:
@@ -107,8 +128,11 @@ def is_duplicate(
         conn.close()
 
 
-def insert_lead(lead_data: Dict[str, Any], db_path: str) -> int:
+def insert_lead(lead_data: Dict[str, Any], db_path: Optional[str] = None) -> int:
     """Inserts a new raw lead into the staging state."""
+    if not db_path:
+        db_path = get_default_config().get("app", {}).get("db_path", "lead_pipeline.db")
+
     if "lead_uuid" not in lead_data or not lead_data["lead_uuid"]:
         lead_data["lead_uuid"] = uuid.uuid4().hex
 
@@ -138,8 +162,11 @@ def insert_lead(lead_data: Dict[str, Any], db_path: str) -> int:
         conn.close()
 
 
-def get_unaudited_leads(db_path: str) -> List[Dict[str, Any]]:
+def get_unaudited_leads(db_path: Optional[str] = None) -> List[Dict[str, Any]]:
     """Fetches leads that have a website but have not been audited yet."""
+    if not db_path:
+        db_path = get_default_config().get("app", {}).get("db_path", "lead_pipeline.db")
+
     conn = get_connection(db_path)
     try:
         cursor = conn.cursor()
@@ -160,9 +187,12 @@ def update_lead_audit(
     audit_data: Dict[str, Any],
     primary_status: str,
     sub_status: str,
-    db_path: str = None
+    db_path: Optional[str] = None
 ) -> None:
     """Updates technical audit results, DM contact information, and state."""
+    if not db_path:
+        db_path = get_default_config().get("app", {}).get("db_path", "lead_pipeline.db")
+
     allowed_fields = [
         "load_time_sec", "ttfb_ms", "page_weight_mb", "dom_nodes",
         "mobile_broken", "cms_detected", "failed_major_test",

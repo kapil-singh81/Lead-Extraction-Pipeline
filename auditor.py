@@ -2,7 +2,6 @@ import asyncio
 import json
 import logging
 import re
-import urllib.parse
 from typing import Dict, Any, List, Tuple, Optional
 
 from playwright.async_api import async_playwright, Browser
@@ -59,17 +58,18 @@ def extract_linkedin(html_content: str) -> Optional[str]:
     return match.group(0) if match else None
 
 
-def extract_decision_maker(html_content: str, keywords: List[str]) -> Tuple[Optional[str], Optional[str]]:
+def extract_decision_maker(html_content: str) -> Tuple[Optional[str], Optional[str]]:
     """
-    Extracts Decision Maker name and title from JSON-LD schema or page text heuristics.
+    Extracts Decision Maker name and title exclusively from structured Schema.org JSON-LD metadata.
+    Leaves fields null if not present in structured metadata (anti-scope creep).
     Returns: (dm_name, dm_title)
     """
-    if not keywords:
-        return None, None
-
-    # 1. Inspect Schema.org JSON-LD scripts
     try:
-        ld_scripts = re.findall(r'<script[^>]*type=["\'"]application/ld\+json["\'][^>]*>(.*?)</script>', html_content, re.DOTALL | re.IGNORECASE)
+        ld_scripts = re.findall(
+            r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+            html_content,
+            re.DOTALL | re.IGNORECASE
+        )
         for s in ld_scripts:
             try:
                 data = json.loads(s.strip())
@@ -95,24 +95,6 @@ def extract_decision_maker(html_content: str, keywords: List[str]) -> Tuple[Opti
     except Exception:
         pass
 
-    # 2. Text heuristics against decision maker keywords
-    text_clean = re.sub(r"<script.*?</script>", " ", html_content, flags=re.DOTALL | re.IGNORECASE)
-    text_clean = re.sub(r"<style.*?</style>", " ", text_clean, flags=re.DOTALL | re.IGNORECASE)
-    text_clean = re.sub(r"<[^>]+>", " \n ", text_clean)
-    lines = [line.strip() for line in text_clean.splitlines() if line.strip()]
-
-    kw_pattern = "|".join(re.escape(k) for k in keywords)
-
-    for line in lines:
-        if len(line) > 100:
-            continue
-        m1 = re.search(rf"^([A-Z][a-z]+(?:\s+[A-Z]\.?)*(?:\s+[A-Z][a-z]+)+)[,\s\-–|]+(?:the\s+)?({kw_pattern})\b", line, re.IGNORECASE)
-        if m1:
-            return m1.group(1).strip(), m1.group(2).strip().title()
-        m2 = re.search(rf"^(?:the\s+)?({kw_pattern})[:\s\-–|]+([A-Z][a-z]+(?:\s+[A-Z]\.?)*(?:\s+[A-Z][a-z]+)+)$", line, re.IGNORECASE)
-        if m2:
-            return m2.group(2).strip(), m2.group(1).strip().title()
-
     return None, None
 
 
@@ -122,11 +104,13 @@ async def audit_single_site(
     config: Dict[str, Any],
     semaphore: asyncio.Semaphore
 ) -> None:
-    """Audits speed, mobile responsiveness, bloat, and contacts for a single website."""
+    """
+    Audits speed, mobile responsiveness, bloat, and contacts for a single website.
+    Strictly evaluates single landing URL without secondary crawl overhead.
+    """
     auditor_cfg = config["auditor"]
     thresholds = auditor_cfg["thresholds"]
     generic_prefixes = auditor_cfg["generic_email_prefixes"]
-    dm_keywords = auditor_cfg.get("decision_maker_keywords", [])
     db_path = config["app"]["db_path"]
 
     lead_id = lead["id"]
@@ -139,8 +123,8 @@ async def audit_single_site(
     async with semaphore:
         logging.info(f"Auditing [{lead_id}]: {url}")
         context = await browser.new_context(
-            viewport=auditor_cfg["mobile_viewport"],
-            user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1"
+            viewport=auditor_cfg.get("mobile_viewport", {"width": 390, "height": 844}),
+            user_agent=auditor_cfg.get("mobile_user_agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1")
         )
         page = await context.new_page()
 
@@ -156,8 +140,8 @@ async def audit_single_site(
         page.on("response", on_response)
 
         try:
-            await page.goto(url, timeout=auditor_cfg["page_timeout_ms"], wait_until="load")
-            await page.wait_for_timeout(1000)
+            await page.goto(url, timeout=auditor_cfg.get("page_timeout_ms", 15000), wait_until="load")
+            await page.wait_for_timeout(800)
 
             metrics = await page.evaluate("""() => {
                 const nav = performance.getEntriesByType('navigation')[0];
@@ -181,28 +165,7 @@ async def audit_single_site(
             cms = detect_cms(html_content)
             dm_emails, generic_emails = extract_emails(html_content, generic_prefixes)
             dm_linkedin = extract_linkedin(html_content)
-            dm_name, dm_title = extract_decision_maker(html_content, dm_keywords)
-
-            # Secondary shallow crawl: check /contact or /about if contacts are missing
-            if (not dm_emails and not generic_emails) or not dm_name:
-                try:
-                    contact_loc = page.locator("a[href*='contact'], a[href*='about']").first
-                    if await contact_loc.count() > 0:
-                        contact_link = await contact_loc.get_attribute("href", timeout=2000)
-                        if contact_link:
-                            contact_full_url = urllib.parse.urljoin(url, contact_link)
-                            if urllib.parse.urlparse(contact_full_url).netloc == urllib.parse.urlparse(url).netloc:
-                                await page.goto(contact_full_url, timeout=10000, wait_until="domcontentloaded")
-                                contact_html = await page.content()
-                                c_dm, c_gen = extract_emails(contact_html, generic_prefixes)
-                                dm_emails.extend(c_dm)
-                                generic_emails.extend(c_gen)
-                                if not dm_linkedin:
-                                    dm_linkedin = extract_linkedin(contact_html)
-                                if not dm_name:
-                                    dm_name, dm_title = extract_decision_maker(contact_html, dm_keywords)
-                except Exception:
-                    pass
+            dm_name, dm_title = extract_decision_maker(html_content)
 
             page_weight_mb = round(total_bytes / (1024 * 1024), 2)
             load_time_sec = round(metrics["load_time_sec"], 2)
@@ -316,13 +279,14 @@ async def run_site_auditor(config) -> None:
         logging.info("No websites pending audit.")
         return
 
-    logging.info(f"Found {len(leads_to_audit)} websites to audit. Concurrency limit: {config['auditor']['concurrency_limit']}")
-    semaphore = asyncio.Semaphore(config["auditor"]["concurrency_limit"])
+    concurrency = config["auditor"].get("concurrency_limit", 5)
+    logging.info(f"Found {len(leads_to_audit)} websites to audit. Concurrency limit: {concurrency}")
+    semaphore = asyncio.Semaphore(concurrency)
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
-            args=config["auditor"]["headless_args"]
+            args=config["auditor"].get("headless_args", ["--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"])
         )
         tasks = [audit_single_site(browser, lead, config, semaphore) for lead in leads_to_audit]
         await asyncio.gather(*tasks)

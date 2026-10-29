@@ -3,12 +3,6 @@ import uuid
 from typing import Optional, Dict, Any, List
 
 
-SHARED_EXCLUDED_DOMAINS = {
-    "facebook.com", "instagram.com", "linkedin.com", "twitter.com",
-    "x.com", "yelp.com", "yellowpages.com", "youtube.com", "tiktok.com"
-}
-
-
 def get_connection(db_path: str) -> sqlite3.Connection:
     """Creates a database connection with dict-like row access and concurrency timeout."""
     conn = sqlite3.connect(db_path, timeout=30.0)
@@ -81,17 +75,19 @@ def is_duplicate(
     clean_domain: Optional[str] = None,
     maps_place_id: Optional[str] = None,
     clean_phone: Optional[str] = None,
-    db_path: Optional[str] = None
+    db_path: Optional[str] = None,
+    excluded_domains: Optional[List[str]] = None
 ) -> bool:
     """
     Checks if an entity already exists in the database.
     Evaluates Domain -> Maps Place ID -> Phone.
     """
+    ignored_domains = set(d.lower() for d in excluded_domains) if excluded_domains else set()
     conn = get_connection(db_path)
     try:
         cursor = conn.cursor()
 
-        if clean_domain and clean_domain.lower() not in SHARED_EXCLUDED_DOMAINS:
+        if clean_domain and clean_domain.lower() not in ignored_domains:
             cursor.execute("SELECT 1 FROM leads WHERE clean_domain = ? LIMIT 1", (clean_domain,))
             if cursor.fetchone():
                 return True

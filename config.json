@@ -2,7 +2,18 @@
   "app": {
     "db_path": "lead_pipeline.db",
     "target_country": "US",
-    "log_level": "INFO"
+    "log_level": "INFO",
+    "excluded_domains": [
+      "facebook.com",
+      "instagram.com",
+      "linkedin.com",
+      "twitter.com",
+      "x.com",
+      "yelp.com",
+      "yellowpages.com",
+      "youtube.com",
+      "tiktok.com"
+    ]
   },
   "scraper_c1": {
     "browser_channel": "chrome",
@@ -63,6 +74,7 @@
     "concurrency_limit": 5,
     "headless_args": ["--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"],
     "page_timeout_ms": 15000,
+    "mobile_user_agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1",
     "mobile_viewport": {
       "width": 390,
       "height": 844

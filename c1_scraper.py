@@ -182,9 +182,10 @@ async def extract_single_result(page: Page, query: str, config: dict) -> int:
                 phone = m.group(1).strip()
 
     clean_phone = clean_phone_number(phone, default_prefix)
+    excluded_domains = config.get("app", {}).get("excluded_domains", [])
 
     # Deduplication check against SQLite
-    if database.is_duplicate(clean_domain=clean_domain, maps_place_id=place_id, clean_phone=clean_phone, db_path=db_path):
+    if database.is_duplicate(clean_domain=clean_domain, maps_place_id=place_id, clean_phone=clean_phone, db_path=db_path, excluded_domains=excluded_domains):
         logging.info(f"Duplicate skipped (single match): '{business_name}' ({clean_domain or place_id})")
         return 0
 
@@ -400,9 +401,10 @@ async def scrape_single_query(page: Page, query: str, config: dict) -> int:
                             logging.debug(f"Detail pane extraction error for '{business_name}': {pane_err}")
 
                 clean_phone = clean_phone_number(phone, default_prefix)
+                excluded_domains = config.get("app", {}).get("excluded_domains", [])
 
                 # Deduplication Check against SQLite Master Archive
-                if database.is_duplicate(clean_domain=clean_domain, maps_place_id=place_id, clean_phone=clean_phone, db_path=db_path):
+                if database.is_duplicate(clean_domain=clean_domain, maps_place_id=place_id, clean_phone=clean_phone, db_path=db_path, excluded_domains=excluded_domains):
                     logging.info(f"Duplicate skipped: '{business_name}' ({clean_domain or place_id})")
                     continue
 

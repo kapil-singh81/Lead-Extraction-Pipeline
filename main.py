@@ -65,6 +65,16 @@ async def run_pipeline(config_path: str, query: str = None, country: str = None)
         config["app"]["target_country"] = country_clean
         logging.info(f"[RUNTIME OVERRIDE] Target country set to: '{country_clean}'")
 
+        country_prefix_map = {
+            "US": "+1", "CA": "+1",
+            "IN": "+91",
+            "UK": "+44", "GB": "+44",
+            "AU": "+61",
+        }
+        if country_clean in country_prefix_map:
+            config["scraper_c1"]["default_phone_prefix"] = country_prefix_map[country_clean]
+            logging.info(f"[RUNTIME OVERRIDE] Phone prefix set to: '{country_prefix_map[country_clean]}'")
+
     # --- Stage 1: Google Maps Harvester (c1) ---
     logging.info("--- [STAGE 1/3] Running Google Maps Extractor ---")
     try:

@@ -1,20 +1,30 @@
-# Environments
+# Secrets & Service Accounts
+credentials.json
+*.pem
+*.key
+
+# Local SQLite Database & Locks
+lead_pipeline.db
+lead_pipeline.db-wal
+lead_pipeline.db-shm
+
+# Chrome Automation Profiles & Sessions
+chrome_lead_profile/
+*/chrome_lead_profile/
+*.lock
+
+# Python Environment & Cache
 venv/
 .venv/
 env/
-
-# Python cache
 __pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
 
-# Chrome user profile and temporary files
-chrome_lead_profile/
+# Logs
 *.log
 
-# Sensitive service account credentials
-credentials.json
-
-# Local SQLite databases (uncomment if you do not want to track runtime db)
-# *.db
-
+# OS Specific
+.DS_Store
+Thumbs.db

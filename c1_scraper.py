@@ -16,6 +16,10 @@ def clean_website_url(raw_url):
     if not raw_url:
         return None, None
 
+    # Immediately reject Google sponsored ad click-tracker URLs
+    if raw_url.startswith("/aclk") or "google.com/aclk" in raw_url:
+        return None, None
+
     # Handle Google redirect wrapper: /url?q=https://example.com/&sa=...
     if "google.com/url" in raw_url:
         parsed = urllib.parse.urlparse(raw_url)
@@ -32,6 +36,9 @@ def clean_website_url(raw_url):
         netloc = parsed.netloc.lower()
         if netloc.startswith("www."):
             netloc = netloc[4:]
+        # Guard against empty or dot-less netloc (e.g. malformed ad URLs)
+        if not netloc or "." not in netloc:
+            return None, None
         clean_domain = netloc.split(":")[0]
         clean_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/")
         return clean_url, clean_domain
@@ -130,8 +137,24 @@ async def extract_single_result(page: Page, query: str, config: dict) -> int:
         logging.warning("Could not extract business name from single-result view.")
         return 0
 
+    # Wait for the permanent /maps/place/ URL to resolve before capturing it
+    try:
+        await page.wait_for_url(lambda u: "/maps/place/" in u, timeout=3000)
+    except Exception:
+        pass
+
     maps_url = page.url
     place_id = extract_place_id(maps_url)
+
+    # If extract_place_id fell back to the raw URL string (no hex ID found),
+    # try the canonical <link> element which always carries the stable place URL
+    if not place_id.startswith("0x"):
+        try:
+            canonical = await page.locator("link[rel='canonical']").get_attribute("href")
+            if canonical:
+                place_id = extract_place_id(canonical)
+        except Exception:
+            pass
 
     # Extract rating & review count
     rating = 0.0
@@ -295,6 +318,11 @@ async def scrape_single_query(page: Page, query: str, config: dict) -> int:
                 seen_card_keys.add(maps_url)
                 place_id = extract_place_id(maps_url)
 
+                # Early deduplication: skip before any DOM interaction or detail pane click
+                if place_id and database.is_duplicate(maps_place_id=place_id, db_path=db_path):
+                    logging.info(f"Duplicate skipped (early place_id check): {place_id}")
+                    continue
+
                 # Extract Business Name
                 name_elem = card.locator(selectors["business_name"]).first
                 business_name = None
@@ -397,6 +425,11 @@ async def scrape_single_query(page: Page, query: str, config: dict) -> int:
                                         m = re.search(r"(\+?[0-9\s\-\(\)]{8,18}[0-9])", aria)
                                         if m:
                                             phone = m.group(1).strip()
+
+                                    # Dismiss the detail pane and restore feed focus
+                                    await page.keyboard.press("Escape")
+                                    await page.wait_for_timeout(400)
+
                         except Exception as pane_err:
                             logging.debug(f"Detail pane extraction error for '{business_name}': {pane_err}")
 

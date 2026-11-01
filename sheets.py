@@ -107,8 +107,10 @@ def ensure_worksheet(spreadsheet: gspread.Spreadsheet, tab_name: str) -> gspread
 
 def sync_to_sheets(config) -> int:
     """
-    Pulls unsynced audited leads from SQLite and batch appends them
-    directly into the intake worksheet ('Today') in a single call.
+    Pulls unsynced audited leads from SQLite, appends them to the 'Today'
+    intake sheet, routes each row to its destination bucket sheet by
+    primary_status, and archives every row to the 'Archive' sheet.
+    All writes are single batch calls per sheet — no cell coordinate math.
     """
     if isinstance(config, str):
         with open(config, "r", encoding="utf-8") as f:
@@ -118,7 +120,12 @@ def sync_to_sheets(config) -> int:
     sheets_cfg = config["sheets"]
     credentials_file = sheets_cfg.get("credentials_file", "credentials.json")
     spreadsheet_id = sheets_cfg.get("spreadsheet_id")
-    today_tab = sheets_cfg.get("tabs", {}).get("today", "Today")
+    tabs = sheets_cfg.get("tabs", {})
+    today_tab         = tabs.get("today",          "Today")
+    outreach_tab      = tabs.get("outreach_ready",  "Outreach Ready")
+    missing_tab       = tabs.get("missing_info",    "Missing Info")
+    disqualified_tab  = tabs.get("disqualified",    "Disqualified")
+    archive_tab       = tabs.get("archive",         "Archive")
 
     logging.info(f"Authenticating with Google Sheets via {credentials_file}...")
     try:
@@ -128,21 +135,61 @@ def sync_to_sheets(config) -> int:
         logging.error(f"Failed to connect to Google Spreadsheet: {e}")
         return 0
 
-    today_sheet = ensure_worksheet(spreadsheet, today_tab)
-    unsynced_leads = get_unsynced_leads(db_path)
+    # Guarantee every bucket sheet exists with headers before any data is written
+    for tab_name in tabs.values():
+        ensure_worksheet(spreadsheet, tab_name)
 
+    today_sheet       = ensure_worksheet(spreadsheet, today_tab)
+    outreach_sheet    = ensure_worksheet(spreadsheet, outreach_tab)
+    missing_sheet     = ensure_worksheet(spreadsheet, missing_tab)
+    disqualified_sheet = ensure_worksheet(spreadsheet, disqualified_tab)
+    archive_sheet     = ensure_worksheet(spreadsheet, archive_tab)
+
+    unsynced_leads = get_unsynced_leads(db_path)
     if not unsynced_leads:
         logging.info("No unsynced leads pending export.")
         return 0
 
-    rows_to_append = [format_lead_row(lead) for lead in unsynced_leads]
-    lead_uuids = [lead["lead_uuid"] for lead in unsynced_leads]
+    # Format all rows once; pair each with its source lead dict for status routing
+    formatted = [(lead, format_lead_row(lead)) for lead in unsynced_leads]
+    rows_to_append    = [row for _, row in formatted]
+    lead_uuids        = [lead["lead_uuid"] for lead, _ in formatted]
 
+    # Step 1: Batch append everything to the 'Today' intake sheet
     logging.info(f"Batch appending {len(rows_to_append)} rows to '{today_tab}'...")
     today_sheet.append_rows(rows_to_append, value_input_option="USER_ENTERED")
+
+    # Step 2: Route rows to destination bucket sheets by primary_status
+    outreach_rows    = [row for lead, row in formatted if lead.get("primary_status") == "Outreach Ready"]
+    missing_rows     = [row for lead, row in formatted if lead.get("primary_status") == "Missing Info"]
+    disqualified_rows = [row for lead, row in formatted if lead.get("primary_status") == "Disqualified"]
+
+    if outreach_rows:
+        logging.info(f"Routing {len(outreach_rows)} rows to '{outreach_tab}'...")
+        outreach_sheet.append_rows(outreach_rows, value_input_option="USER_ENTERED")
+
+    if missing_rows:
+        logging.info(f"Routing {len(missing_rows)} rows to '{missing_tab}'...")
+        missing_sheet.append_rows(missing_rows, value_input_option="USER_ENTERED")
+
+    if disqualified_rows:
+        logging.info(f"Routing {len(disqualified_rows)} rows to '{disqualified_tab}'...")
+        disqualified_sheet.append_rows(disqualified_rows, value_input_option="USER_ENTERED")
+
+    # Step 3: Archive every synced row regardless of status
+    logging.info(f"Archiving all {len(rows_to_append)} rows to '{archive_tab}'...")
+    archive_sheet.append_rows(rows_to_append, value_input_option="USER_ENTERED")
+
+    # Mark as synced only after all sheet writes succeed
     mark_leads_as_synced(lead_uuids, db_path)
 
-    logging.info(f"Successfully synced {len(rows_to_append)} leads to '{today_tab}'.")
+    logging.info(
+        f"Sync complete — {len(rows_to_append)} total | "
+        f"{len(outreach_rows)} Outreach Ready | "
+        f"{len(missing_rows)} Missing Info | "
+        f"{len(disqualified_rows)} Disqualified | "
+        f"{len(rows_to_append)} Archived"
+    )
     return len(rows_to_append)
 
 

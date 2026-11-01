@@ -3,14 +3,19 @@ import sqlite3
 import uuid
 from typing import Optional, Dict, Any, List
 
+_CACHED_CONFIG: Optional[Dict[str, Any]] = None
+
 
 def get_default_config() -> Dict[str, Any]:
-    """Loads default configuration from config.json if present."""
-    try:
-        with open("config.json", "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+    """Loads default configuration from config.json on first call, then returns the cached result."""
+    global _CACHED_CONFIG
+    if _CACHED_CONFIG is None:
+        try:
+            with open("config.json", "r", encoding="utf-8") as f:
+                _CACHED_CONFIG = json.load(f)
+        except Exception:
+            _CACHED_CONFIG = {}
+    return _CACHED_CONFIG
 
 
 def get_connection(db_path: Optional[str] = None) -> sqlite3.Connection:
@@ -217,3 +222,98 @@ def update_lead_audit(
             cursor.execute(f"UPDATE leads SET {', '.join(set_clauses)} WHERE id = ?", values)
     finally:
         conn.close()
+
+
+def clean_corrupted_v1_data(db_path: Optional[str] = None) -> None:
+    """
+    One-shot maintenance sweep that repairs three classes of corrupted v1 data:
+
+      1. Fake / version-string emails — dm_email values that contain a numeric
+         domain prefix (@1, @2 … @5) or font-weight artifacts (%wght%) or literal
+         placeholder text (%your@email.com%) are nulled out.
+
+      2. Ad click-tracker URLs — website_url / clean_domain pairs whose domain
+         contains 'aclk' (Google sponsored-ad redirect artifacts) are nulled out.
+
+      3. Re-qualification — leads whose dm_email was just wiped and have no
+         dm_linkedin are downgraded to ('Missing Info', 'Needs DM Contact') and
+         removed from sync_log so they re-export cleanly to Google Sheets.
+    """
+    if not db_path:
+        db_path = get_default_config().get("app", {}).get("db_path", "lead_pipeline.db")
+
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            cursor = conn.cursor()
+
+            # ------------------------------------------------------------------ #
+            # 1. Purge fake / corrupted email values                             #
+            # ------------------------------------------------------------------ #
+            cursor.execute("""
+                UPDATE leads
+                SET dm_email = NULL
+                WHERE dm_email LIKE '%@1%'
+                   OR dm_email LIKE '%@2%'
+                   OR dm_email LIKE '%@3%'
+                   OR dm_email LIKE '%@4%'
+                   OR dm_email LIKE '%@5%'
+                   OR dm_email LIKE '%wght%'
+                   OR dm_email LIKE '%your@email.com%'
+            """)
+            email_rows_fixed = cursor.rowcount
+            print(f"[clean] Nulled corrupted dm_email on {email_rows_fixed} row(s).")
+
+            # ------------------------------------------------------------------ #
+            # 2. Nullify ad click-tracker website URLs                           #
+            # ------------------------------------------------------------------ #
+            cursor.execute("""
+                UPDATE leads
+                SET website_url = NULL,
+                    clean_domain = NULL
+                WHERE clean_domain LIKE '%aclk%'
+            """)
+            aclk_rows_fixed = cursor.rowcount
+            print(f"[clean] Nulled aclk website_url/clean_domain on {aclk_rows_fixed} row(s).")
+
+            # ------------------------------------------------------------------ #
+            # 3. Re-evaluate qualification status for affected leads             #
+            #    Condition: dm_email is now NULL AND dm_linkedin is also NULL    #
+            #    and the lead was previously considered contactable.             #
+            # ------------------------------------------------------------------ #
+            cursor.execute("""
+                UPDATE leads
+                SET primary_status = 'Missing Info',
+                    sub_status      = 'Needs DM Contact',
+                    updated_at      = CURRENT_TIMESTAMP
+                WHERE dm_email   IS NULL
+                  AND dm_linkedin IS NULL
+                  AND primary_status NOT IN ('Today', 'Disqualified')
+            """)
+            requalified = cursor.rowcount
+            print(f"[clean] Re-qualified {requalified} lead(s) to 'Missing Info / Needs DM Contact'.")
+
+            # ------------------------------------------------------------------ #
+            # 4. Remove repaired leads from sync_log so they re-export cleanly  #
+            # ------------------------------------------------------------------ #
+            cursor.execute("""
+                DELETE FROM sync_log
+                WHERE lead_uuid IN (
+                    SELECT lead_uuid FROM leads
+                    WHERE dm_email   IS NULL
+                      AND dm_linkedin IS NULL
+                      AND primary_status = 'Missing Info'
+                      AND sub_status     = 'Needs DM Contact'
+                )
+            """)
+            sync_cleared = cursor.rowcount
+            print(f"[clean] Cleared {sync_cleared} entry/entries from sync_log for re-export.")
+
+        print("[clean] Data cleanup complete.")
+
+    finally:
+        conn.close()
+
+
+if __name__ == "__main__":
+    clean_corrupted_v1_data()

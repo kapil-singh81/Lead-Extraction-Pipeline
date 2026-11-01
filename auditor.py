@@ -29,9 +29,26 @@ def detect_cms(page_content: str) -> str:
 def extract_emails(html_content: str, generic_prefixes: List[str]) -> Tuple[List[str], List[str]]:
     """
     Extracts emails from text, filtering noise and punctuation.
+
+    Filters applied (in order):
+      1. Regex enforces a purely alphabetical TLD of 2–63 characters.
+      2. Rejects matches whose domain contains a version-number pattern (e.g. "1.2").
+      3. Blacklists known dummy / template domains.
+      4. Strips trailing punctuation and deduplicates.
+
     Returns: (dm_or_direct_emails, generic_emails)
     """
-    raw_matches = re.findall(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", html_content)
+    raw_matches = re.findall(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z]{2,63}", html_content)
+
+    DOMAIN_BLACKLIST = {
+        "example.com",
+        "yourdomain.com",
+        "domain.com",
+        "email.com",
+        "sentry.io",
+        "wixpress.com",
+    }
+
     dm_emails = []
     generic_emails = []
     seen = set()
@@ -39,10 +56,20 @@ def extract_emails(html_content: str, generic_prefixes: List[str]) -> Tuple[List
 
     for email in raw_matches:
         email_clean = email.lower().strip().rstrip(".,;:)")
-        if not email_clean or email_clean in seen or any(email_clean.endswith(ext) for ext in invalid_suffixes):
+        if not email_clean or email_clean in seen:
             continue
-        if "sentry" in email_clean or "wixpress" in email_clean or "example.com" in email_clean:
+        if any(email_clean.endswith(ext) for ext in invalid_suffixes):
             continue
+
+        # Reject if the domain portion contains a version-number pattern (e.g. "2.0", "1.14")
+        domain = email_clean.split("@", 1)[1]
+        if re.search(r"\d+\.\d+", domain):
+            continue
+
+        # Reject blacklisted dummy / template domains
+        if domain in DOMAIN_BLACKLIST:
+            continue
+
         seen.add(email_clean)
         if any(email_clean.startswith(prefix) for prefix in generic_prefixes):
             generic_emails.append(email_clean)
@@ -124,7 +151,8 @@ async def audit_single_site(
         logging.info(f"Auditing [{lead_id}]: {url}")
         context = await browser.new_context(
             viewport=auditor_cfg.get("mobile_viewport", {"width": 390, "height": 844}),
-            user_agent=auditor_cfg.get("mobile_user_agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1")
+            user_agent=auditor_cfg.get("mobile_user_agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1"),
+            ignore_https_errors=True
         )
         page = await context.new_page()
 
@@ -223,9 +251,18 @@ async def audit_single_site(
 
         except Exception as e:
             logging.warning(f"Audit failed for ID {lead_id} ({url}): {e}")
+            payload = {
+                "load_time_sec": -1.0,
+                "ttfb_ms": -1,
+                "page_weight_mb": 0.0,
+                "dom_nodes": 0,
+                "mobile_broken": 0,
+                "failed_major_test": 1,
+                "primary_flaw_label": f"Site Unreachable: {str(e)[:50]}"
+            }
             database.update_lead_audit(
                 lead_id,
-                {"failed_major_test": 1, "primary_flaw_label": f"Site Unreachable: {str(e)[:50]}"},
+                payload,
                 "Disqualified",
                 "Dead Domain / Unreachable",
                 db_path=db_path

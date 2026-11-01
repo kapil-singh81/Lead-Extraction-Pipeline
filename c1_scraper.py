@@ -148,7 +148,7 @@ async def extract_single_result(page: Page, query: str, config: dict) -> int:
 
     # If extract_place_id fell back to the raw URL string (no hex ID found),
     # try the canonical <link> element which always carries the stable place URL
-    if not place_id.startswith("0x"):
+    if not place_id or not place_id.startswith("0x"):
         try:
             canonical = await page.locator("link[rel='canonical']").get_attribute("href")
             if canonical:
@@ -426,10 +426,9 @@ async def scrape_single_query(page: Page, query: str, config: dict) -> int:
                                         if m:
                                             phone = m.group(1).strip()
 
-                                    # Dismiss the detail pane and restore feed focus
-                                    await page.keyboard.press("Escape")
-                                    await page.wait_for_timeout(400)
-
+                            # Dismiss the detail pane and restore feed focus
+                            await page.keyboard.press("Escape")
+                            await page.wait_for_timeout(400)
                         except Exception as pane_err:
                             logging.debug(f"Detail pane extraction error for '{business_name}': {pane_err}")
 

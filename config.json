@@ -74,7 +74,11 @@
   },
   "auditor": {
     "concurrency_limit": 5,
-    "headless_args": ["--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"],
+    "headless_args": [
+      "--disable-gpu",
+      "--no-sandbox",
+      "--disable-dev-shm-usage"
+    ],
     "page_timeout_ms": 15000,
     "mobile_user_agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1",
     "mobile_viewport": {

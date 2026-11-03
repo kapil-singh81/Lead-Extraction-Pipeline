@@ -316,6 +316,7 @@ async def scrape_single_query(page: Page, query: str, config: dict) -> int:
                     continue
 
                 seen_card_keys.add(maps_url)
+                new_cards_found_in_pass += 1
                 place_id = extract_place_id(maps_url)
 
                 # Early deduplication: skip before any DOM interaction or detail pane click
@@ -385,6 +386,7 @@ async def scrape_single_query(page: Page, query: str, config: dict) -> int:
 
                             await click_target.click()
 
+                            pane_matched = False
                             # Wait for detail pane title to change and match current business name
                             try:
                                 clean_expected = re.sub(r"[^a-zA-Z0-9]", "", business_name).lower()[:8]
@@ -400,31 +402,33 @@ async def scrape_single_query(page: Page, query: str, config: dict) -> int:
                                     {"oldName": current_h1, "exp": clean_expected, "sel": title_sel},
                                     timeout=scraper_cfg.get("detail_pane_timeout_ms", 2500)
                                 )
+                                pane_matched = True
                             except Exception:
                                 await page.wait_for_timeout(600)
 
-                            if not website_url:
-                                authority_sel = selectors.get("detail_pane_website", "a[data-item-id='authority']")
-                                authority_btn = page.locator(authority_sel).first
-                                if await authority_btn.count() > 0:
-                                    raw_href = await authority_btn.get_attribute("href")
-                                    website_url, clean_domain = clean_website_url(raw_href)
+                            if pane_matched:
+                                if not website_url:
+                                    authority_sel = selectors.get("detail_pane_website", "a[data-item-id='authority']")
+                                    authority_btn = page.locator(authority_sel).first
+                                    if await authority_btn.count() > 0:
+                                        raw_href = await authority_btn.get_attribute("href")
+                                        website_url, clean_domain = clean_website_url(raw_href)
 
-                            if not phone:
-                                phone_sel = selectors.get("detail_pane_phone", "[data-item-id^='phone:tel:']")
-                                phone_btn = page.locator(phone_sel).first
-                                if await phone_btn.count() > 0:
-                                    data_id = (await phone_btn.get_attribute("data-item-id")) or ""
-                                    if "phone:tel:" in data_id:
-                                        phone = data_id.split("phone:tel:")[-1].strip()
                                 if not phone:
-                                    phone_aria_sel = selectors.get("detail_pane_phone_aria", "button[aria-label*='Phone:' i]")
-                                    p_loc = page.locator(phone_aria_sel).first
-                                    if await p_loc.count() > 0:
-                                        aria = (await p_loc.get_attribute("aria-label")) or ""
-                                        m = re.search(r"(\+?[0-9\s\-\(\)]{8,18}[0-9])", aria)
-                                        if m:
-                                            phone = m.group(1).strip()
+                                    phone_sel = selectors.get("detail_pane_phone", "[data-item-id^='phone:tel:']")
+                                    phone_btn = page.locator(phone_sel).first
+                                    if await phone_btn.count() > 0:
+                                        data_id = (await phone_btn.get_attribute("data-item-id")) or ""
+                                        if "phone:tel:" in data_id:
+                                            phone = data_id.split("phone:tel:")[-1].strip()
+                                    if not phone:
+                                        phone_aria_sel = selectors.get("detail_pane_phone_aria", "button[aria-label*='Phone:' i]")
+                                        p_loc = page.locator(phone_aria_sel).first
+                                        if await p_loc.count() > 0:
+                                            aria = (await p_loc.get_attribute("aria-label")) or ""
+                                            m = re.search(r"(\+?[0-9\s\-\(\)]{8,18}[0-9])", aria)
+                                            if m:
+                                                phone = m.group(1).strip()
 
                             # Dismiss the detail pane and restore feed focus
                             await page.keyboard.press("Escape")
@@ -464,7 +468,6 @@ async def scrape_single_query(page: Page, query: str, config: dict) -> int:
 
                 database.insert_lead(lead_payload, db_path=db_path)
                 total_saved_for_query += 1
-                new_cards_found_in_pass += 1
                 logging.info(f"[+] Saved: '{business_name}' | Site: {clean_domain} | Phone: {clean_phone}")
 
             except Exception as item_err:
@@ -472,7 +475,7 @@ async def scrape_single_query(page: Page, query: str, config: dict) -> int:
                 continue
 
         # Check for Google's "End of list" marker
-        end_marker = page.locator(selectors["end_of_list_marker"]).first
+        end_marker = page.locator("div[role='feed'] span.HlvSq, div[role='feed'] p.fontBodyMedium:has-text('end of the list'), span.HlvSq").first
         if await end_marker.count() > 0 and await end_marker.is_visible():
             logging.info(f"Reached end of list for query: '{query}'")
             break
@@ -482,11 +485,17 @@ async def scrape_single_query(page: Page, query: str, config: dict) -> int:
         else:
             consecutive_empty_scrolls += 1
 
-        # Smooth randomized scroll down inside div[role="feed"]
-        await page.evaluate("""(args) => {
-            const el = document.querySelector(args.sel);
-            if (el) el.scrollBy(0, args.px);
-        }""", {"sel": feed_selector, "px": scroll_px})
+        # Scroll last card into view and pull feed to bottom to trigger virtual list loader
+        if cards:
+            try:
+                await cards[-1].scroll_into_view_if_needed(timeout=2000)
+            except Exception:
+                pass
+
+        await page.evaluate("""(sel) => {
+            const el = document.querySelector(sel);
+            if (el) el.scrollTop = el.scrollHeight;
+        }""", feed_selector)
         await page.wait_for_timeout(random.randint(scraper_cfg["scroll_delay_min_ms"], scraper_cfg["scroll_delay_max_ms"]))
 
     logging.info(f"Completed query '{query}'. Total new leads staged: {total_saved_for_query}")

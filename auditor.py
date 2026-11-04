@@ -3,6 +3,8 @@ import json
 import logging
 import re
 from typing import Dict, Any, List, Tuple, Optional
+import urllib.parse
+import urllib.request
 
 from playwright.async_api import async_playwright, Browser
 import database
@@ -125,6 +127,70 @@ def extract_decision_maker(html_content: str) -> Tuple[Optional[str], Optional[s
     return None, None
 
 
+def determine_lead_status(
+    has_major_flaw: bool,
+    is_unreachable: bool,
+    clean_phone: Optional[str],
+    dm_email: Optional[str],
+    dm_linkedin: Optional[str],
+    generic_email: Optional[str]
+) -> Tuple[str, str]:
+    """Determines lead qualification bucket based on flaws and available contact channels."""
+    if not has_major_flaw and not is_unreachable:
+        return "Disqualified", "Healthy Site"
+
+    if is_unreachable:
+        if clean_phone and len(clean_phone) >= 7:
+            return "Outreach Ready", "Dead Domain (Phone Active)"
+        return "Disqualified", "Dead Domain (No Contact)"
+
+    has_phone = bool(clean_phone and len(clean_phone) >= 7)
+    has_direct_digital = bool(dm_email or dm_linkedin)
+
+    if has_direct_digital:
+        return "Outreach Ready", "Email / LinkedIn Available"
+    if has_phone:
+        return "Outreach Ready", "Direct Phone Available"
+    if generic_email:
+        return "Missing Info", "Needs DM Contact (Generic Email Only)"
+    return "Missing Info", "Needs Contact Info"
+
+
+def classify_phone_line(clean_phone: Optional[str], db_path: Optional[str] = None) -> str:
+    """Classifies phone numbers into Toll-Free, Mobile, Landline, or Local / Unclassified."""
+    if not clean_phone:
+        return "None"
+
+    digits = re.sub(r"\D", "", clean_phone)
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+
+    if len(digits) == 10:
+        area_code = digits[:3]
+        nxx = digits[3:6]
+        if area_code in {"800", "833", "844", "855", "866", "877", "888"}:
+            return "Toll-Free"
+
+        # Safe query if an offline prefix table exists in SQLite
+        if db_path:
+            try:
+                with database.get_connection(db_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "SELECT line_type FROM phone_prefixes WHERE npa = ? AND nxx = ? LIMIT 1",
+                        (area_code, nxx)
+                    )
+                    row = cursor.fetchone()
+                    if row and row["line_type"]:
+                        return str(row["line_type"]).capitalize()
+            except Exception:
+                pass
+
+        return "Local (US)"
+
+    return "International / Other"
+
+
 async def audit_single_site(
     browser: Browser,
     lead: Dict[str, Any],
@@ -179,13 +245,76 @@ async def audit_single_site(
                     loadTimeSec = (nav.loadEventEnd > 0 ? (nav.loadEventEnd - nav.startTime) : nav.duration) / 1000;
                     ttfbMs = Math.round(nav.responseStart - nav.requestStart);
                 }
-                const domNodes = document.querySelectorAll('*').length;
+                const allNodes = document.querySelectorAll('*');
+                const domNodes = allNodes.length;
                 const mobileBroken = document.documentElement.scrollWidth > (window.innerWidth + 5);
+
+                // Text content length
+                const textEls = document.querySelectorAll('p, li, h1, h2, h3, h4, span');
+                let totalText = 0;
+                textEls.forEach(el => totalText += (el.innerText ? el.innerText.trim().length : 0));
+
+                // Meaningful project images (excluding 1x1 tracking pixels and tiny icons)
+                const images = Array.from(document.querySelectorAll('img')).filter(img => {
+                    const rect = img.getBoundingClientRect();
+                    return rect.width > 150 && rect.height > 150;
+                });
+
+                // Lead capture & tap-to-call checks
+                const hasTelLink = document.querySelectorAll('a[href^="tel:"]').length > 0;
+                const hasForm = document.querySelectorAll('form, input[type="tel"], input[type="email"]').length > 0;
+                const ctaKeywords = ['quote', 'estimate', 'schedule', 'book', 'contact'];
+                const interactive = Array.from(document.querySelectorAll('a, button')).map(el => (el.innerText || '').toLowerCase());
+                const hasCta = interactive.some(t => ctaKeywords.some(kw => t.includes(kw)));
+                const hasLeadCapture = (hasTelLink || hasForm || hasCta);
+
+                // Sticky header screen takeover
+                let maxStickyPct = 0;
+                allNodes.forEach(el => {
+                    const style = window.getComputedStyle(el);
+                    if (style.position === 'fixed' || style.position === 'sticky') {
+                        const rect = el.getBoundingClientRect();
+                        if (rect.top <= 10 && rect.width > (window.innerWidth * 0.8)) {
+                            const pct = Math.round((rect.height / window.innerHeight) * 100);
+                            if (pct > maxStickyPct) maxStickyPct = pct;
+                        }
+                    }
+                });
+
+                // Foundational trust anchors
+                const bodyText = (document.body.innerText || '').toLowerCase();
+                const trustKeywords = ['insured', 'licensed', 'warranty', 'guarantee', 'certified', 'reviews', 'bbb'];
+                const trustSignals = trustKeywords.filter(kw => bodyText.includes(kw)).length;
+
+                // Extract direct Facebook business link (excluding share dialogs)
+                const fbAnchor = Array.from(document.querySelectorAll('a[href*="facebook.com"]'))
+                    .find(a => {
+                        const h = a.href.toLowerCase();
+                        return !h.includes('sharer') && !h.includes('share.php') && !h.includes('/dialog/');
+                    });
+                const facebookUrl = fbAnchor ? fbAnchor.href : null;
+
+                // Extract direct Contact/Quote/Estimate page link
+                const formKeywords = ['contact', 'quote', 'estimate', 'schedule', 'get-started'];
+                const formAnchor = Array.from(document.querySelectorAll('a')).find(a => {
+                    const h = a.href.toLowerCase();
+                    return formKeywords.some(kw => h.includes(kw));
+                });
+                const formUrl = formAnchor ? formAnchor.href : null;
+
                 return {
                     load_time_sec: Math.max(0, loadTimeSec),
                     ttfb_ms: Math.max(0, ttfbMs),
                     dom_nodes: domNodes,
-                    mobile_broken: mobileBroken ? 1 : 0
+                    mobile_broken: mobileBroken ? 1 : 0,
+                    text_length: totalText,
+                    image_count: images.length,
+                    has_lead_capture: hasLeadCapture ? 1 : 0,
+                    has_tel_link: hasTelLink ? 1 : 0,
+                    sticky_header_pct: maxStickyPct,
+                    trust_signals: trustSignals,
+                    facebook_url: facebookUrl,
+                    form_url: formUrl
                 };
             }""")
 
@@ -213,22 +342,36 @@ async def audit_single_site(
             if mobile_broken:
                 failures.append("Broken Mobile Layout (Horizontal Overflow)")
 
+            # Commercial Conversion Floors (Safe default fallbacks)
+            if dom_nodes < thresholds.get("min_dom_nodes", 250):
+                failures.append(f"Thin Architecture ({dom_nodes} DOM nodes)")
+            if metrics["text_length"] < thresholds.get("min_text_length", 600):
+                failures.append("Content Starved (<600 chars)")
+            if metrics["image_count"] < thresholds.get("min_images_count", 2):
+                failures.append("Zero Visual Proof (No Job Photos)")
+            if not metrics["has_lead_capture"]:
+                failures.append("Missing Lead Capture (No Quote Form/CTA)")
+            if not metrics["has_tel_link"]:
+                failures.append("Unclickable Phone (Missing tap-to-call link)")
+            if metrics["sticky_header_pct"] > thresholds.get("max_sticky_header_pct", 25):
+                failures.append(f"Obstructive Sticky Header ({metrics['sticky_header_pct']}% screen)")
+            if metrics["trust_signals"] == 0:
+                failures.append("Zero Trust Anchors (No License/Insurance/Reviews)")
+
             failed_major_test = 1 if failures else 0
             primary_flaw_label = ", ".join(failures) if failures else "None"
 
             chosen_dm_email = dm_emails[0] if dm_emails else None
             chosen_generic_email = generic_emails[0] if generic_emails else None
 
-            # Qualification: DM email or LinkedIn required for Outreach Ready
-            if not failed_major_test:
-                primary_status = "Disqualified"
-                sub_status = "Healthy Site"
-            elif chosen_dm_email or dm_linkedin:
-                primary_status = "Outreach Ready"
-                sub_status = "Uncontacted"
-            else:
-                primary_status = "Missing Info"
-                sub_status = "Needs DM Email" if chosen_generic_email else "Needs DM Contact"
+            primary_status, sub_status = determine_lead_status(
+                has_major_flaw=bool(failed_major_test),
+                is_unreachable=False,
+                clean_phone=lead.get("clean_phone"),
+                dm_email=chosen_dm_email,
+                dm_linkedin=dm_linkedin,
+                generic_email=chosen_generic_email
+            )
 
             audit_payload = {
                 "load_time_sec": load_time_sec,
@@ -243,7 +386,9 @@ async def audit_single_site(
                 "dm_title": dm_title,
                 "dm_email": chosen_dm_email,
                 "dm_linkedin": dm_linkedin,
-                "generic_email": chosen_generic_email
+                "generic_email": chosen_generic_email,
+                "facebook_url": metrics.get("facebook_url"),
+                "form_url": metrics.get("form_url")
             }
 
             database.update_lead_audit(lead_id, audit_payload, primary_status, sub_status, db_path=db_path)
@@ -260,15 +405,55 @@ async def audit_single_site(
                 "failed_major_test": 1,
                 "primary_flaw_label": f"Site Unreachable: {str(e)[:50]}"
             }
-            database.update_lead_audit(
-                lead_id,
-                payload,
-                "Disqualified",
-                "Dead Domain / Unreachable",
-                db_path=db_path
+            primary_status, sub_status = determine_lead_status(
+                has_major_flaw=True,
+                is_unreachable=True,
+                clean_phone=lead.get("clean_phone"),
+                dm_email=None,
+                dm_linkedin=None,
+                generic_email=None
             )
+            database.update_lead_audit(lead_id, payload, primary_status, sub_status, db_path=db_path)
         finally:
             await context.close()
+
+
+def recover_missing_website(business_name: str, city: str) -> Optional[str]:
+    """
+    Attempts to discover an unlisted official website for established businesses via Bing search.
+    Filters out major directories and aggregators.
+    """
+    if not business_name:
+        return None
+
+    query = urllib.parse.quote_plus(f'"{business_name}" "{city}" official website')
+    search_url = f"https://www.bing.com/search?q={query}"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    req = urllib.request.Request(search_url, headers=headers)
+
+    directory_blacklist = {
+        "yelp.com", "facebook.com", "yellowpages.com", "bbb.org",
+        "angi.com", "thumbtack.com", "mapquest.com", "instagram.com",
+        "linkedin.com", "twitter.com", "x.com", "wikipedia.org",
+        "youtube.com", "bing.com", "microsoft.com", "yahoo.com"
+    }
+
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+
+        # Extract organic search result links from Bing HTML
+        matches = re.findall(r'<li class="b_algo">.*?<h2><a href="([^"]+)"', html, re.DOTALL)
+        for link in matches:
+            netloc = urllib.parse.urlparse(link).netloc.lower()
+            if netloc.startswith("www."):
+                netloc = netloc[4:]
+            if not any(d in netloc for d in directory_blacklist):
+                return link
+    except Exception:
+        pass
+
+    return None
 
 
 def process_no_website_leads(config: Dict[str, Any]) -> int:
@@ -277,21 +462,45 @@ def process_no_website_leads(config: Dict[str, Any]) -> int:
     with database.get_connection(db_path) as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, clean_phone FROM leads
+            SELECT id, clean_phone, business_name, city, review_count FROM leads
             WHERE (website_url IS NULL OR website_url = '')
               AND primary_status = 'Today'
         """)
-        no_web_leads = cursor.fetchall()
+        leads = cursor.fetchall()
 
     count = 0
-    for row in no_web_leads:
-        lead_id = row["id"]
-        phone = row["clean_phone"]
+    for lead in leads:
+        lead_id = lead["id"]
+        business_name = lead.get("business_name") or ""
+        city = lead.get("city") or ""
+        review_count = lead.get("review_count") or 0
+        phone = lead.get("clean_phone")
+
+        # Attempt to recover missing website for established businesses
+        if review_count >= 5:
+            recovered_url = recover_missing_website(business_name, city)
+            if recovered_url:
+                netloc = urllib.parse.urlparse(recovered_url).netloc.lower()
+                clean_domain = netloc[4:] if netloc.startswith("www.") else netloc
+                with database.get_connection(db_path) as conn:
+                    conn.cursor().execute(
+                        "UPDATE leads SET website_url = ?, clean_domain = ? WHERE id = ?",
+                        (recovered_url, clean_domain, lead_id)
+                    )
+                    conn.commit()
+                logging.info(f"Recovered unlisted website for '{business_name}': {recovered_url}")
+                continue  # Skip marking as No Website; queued for normal audit
+
         flaw = {"failed_major_test": 1, "primary_flaw_label": "No Website Present"}
-        if phone:
-            database.update_lead_audit(lead_id, flaw, "Outreach Ready", "Uncontacted (No Website)", db_path=db_path)
-        else:
-            database.update_lead_audit(lead_id, flaw, "Missing Info", "Needs Contact (No Website)", db_path=db_path)
+        primary_status, sub_status = determine_lead_status(
+            has_major_flaw=True,
+            is_unreachable=False,
+            clean_phone=phone,
+            dm_email=None,
+            dm_linkedin=None,
+            generic_email=None
+        )
+        database.update_lead_audit(lead_id, flaw, primary_status, sub_status, db_path=db_path)
         count += 1
 
     if count > 0:
@@ -330,6 +539,10 @@ async def run_site_auditor(config) -> None:
         await browser.close()
 
     logging.info("--- Site Audits & Routing Pass Complete ---")
+
+
+# Alias for pipeline executor
+run_audit_pipeline = run_site_auditor
 
 
 if __name__ == "__main__":

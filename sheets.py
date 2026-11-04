@@ -13,7 +13,8 @@ SHEET_HEADERS = [
     "Load Time (s)", "TTFB (ms)", "Page Weight (MB)", "DOM Nodes",
     "Mobile Broken", "CMS Detected", "Failed Major Test", "Primary Flaw",
     "DM Name", "DM Title", "DM Email", "DM LinkedIn", "Generic Email",
-    "Primary Status", "Sub Status", "Date Harvested"
+    "Primary Status", "Sub Status", "Date Harvested",
+    "Line Type", "Contact Form URL", "Facebook URL", "Review Snippet"
 ]
 
 
@@ -86,20 +87,25 @@ def format_lead_row(lead: Dict[str, Any]) -> List[Any]:
         str(lead.get("generic_email") or ""),
         str(lead.get("primary_status") or ""),
         str(lead.get("sub_status") or ""),
-        str(lead.get("created_at") or "")
+        str(lead.get("created_at") or ""),
+        str(lead.get("line_type") or "Unknown"),
+        str(lead.get("form_url") or ""),
+        str(lead.get("facebook_url") or ""),
+        str(lead.get("review_snippet") or "")
     ]
 
 
 def ensure_worksheet(spreadsheet: gspread.Spreadsheet, tab_name: str) -> gspread.Worksheet:
-    """Retrieves or creates a worksheet and ensures standard 29-column headers exist in Row 1."""
+    """Retrieves or creates a worksheet and ensures standard headers exist in Row 1."""
     try:
         sheet = spreadsheet.worksheet(tab_name)
     except gspread.WorksheetNotFound:
         logging.info(f"Worksheet '{tab_name}' not found. Creating it...")
         sheet = spreadsheet.add_worksheet(title=tab_name, rows=1000, cols=len(SHEET_HEADERS))
 
-    if not sheet.row_values(1):
-        logging.info(f"Writing headers to '{tab_name}' tab...")
+    existing_headers = sheet.row_values(1)
+    if not existing_headers or len(existing_headers) < len(SHEET_HEADERS):
+        logging.info(f"Updating headers on '{tab_name}' tab...")
         sheet.update(range_name="A1", values=[SHEET_HEADERS])
 
     return sheet

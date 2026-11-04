@@ -3,6 +3,7 @@ import json
 import logging
 import random
 import re
+from typing import List, Tuple, Optional
 import urllib.parse
 
 from playwright.async_api import async_playwright, Page
@@ -204,15 +205,31 @@ async def extract_single_result(page: Page, query: str, config: dict) -> int:
             if m:
                 phone = m.group(1).strip()
 
+    # Extract featured review snippet for outreach personalization
+    review_snippet = None
+    snippet_elem = page.locator("span.wiI7pd").first
+    if await snippet_elem.count() > 0:
+        try:
+            raw_snippet = (await snippet_elem.inner_text()).strip()
+            review_snippet = " ".join(raw_snippet.split())[:180]
+        except Exception:
+            pass
+
     clean_phone = clean_phone_number(phone, default_prefix)
-    excluded_domains = config.get("app", {}).get("excluded_domains", [])
+    niche, city = parse_niche_and_city(query, target_country)
 
     # Deduplication check against SQLite
-    if database.is_duplicate(clean_domain=clean_domain, maps_place_id=place_id, clean_phone=clean_phone, db_path=db_path, excluded_domains=excluded_domains):
-        logging.info(f"Duplicate skipped (single match): '{business_name}' ({clean_domain or place_id})")
+    if database.lead_exists(
+        clean_domain=clean_domain,
+        maps_place_id=place_id,
+        clean_phone=clean_phone,
+        business_name=business_name,
+        city=city,
+        db_path=db_path
+    ):
+        logging.info(f"Skipping duplicate lead: '{business_name}' ({clean_domain or clean_phone or place_id})")
         return 0
 
-    niche, city = parse_niche_and_city(query, target_country)
     lead_payload = {
         "business_name": business_name,
         "niche": niche,
@@ -229,7 +246,8 @@ async def extract_single_result(page: Page, query: str, config: dict) -> int:
         "lead_origin_pipeline": lead_origin,
         "search_query_raw": query,
         "primary_status": "Today",
-        "sub_status": "Pending Evaluation"
+        "sub_status": "Pending Evaluation",
+        "review_snippet": review_snippet
     }
 
     database.insert_lead(lead_payload, db_path=db_path)
@@ -237,7 +255,22 @@ async def extract_single_result(page: Page, query: str, config: dict) -> int:
     return 1
 
 
-async def scrape_single_query(page: Page, query: str, config: dict) -> int:
+def generate_geo_tiles(center_lat: float, center_lon: float, grid_size: int = 2, step_deg: float = 0.04) -> List[Tuple[float, float]]:
+    """
+    Generates an NxN grid of latitude/longitude coordinates centered on a target city.
+    step_deg=0.04 corresponds to ~4.5 km steps, bypassing Google Maps' 120-listing viewport cap.
+    """
+    tiles = []
+    half = grid_size // 2
+    for i in range(-half, half + 1):
+        for j in range(-half, half + 1):
+            lat = round(center_lat + (i * step_deg), 4)
+            lon = round(center_lon + (j * step_deg), 4)
+            tiles.append((lat, lon))
+    return list(dict.fromkeys(tiles))  # Preserve unique coordinate pairs
+
+
+async def scrape_single_query(page: Page, query: str, config: dict, geo_coord: Optional[Tuple[float, float]] = None) -> int:
     """
     Executes a single Maps search query with dual-layout detection:
     - Path A: Multi-result feed scroll (div[role='feed'])
@@ -250,12 +283,19 @@ async def scrape_single_query(page: Page, query: str, config: dict) -> int:
     lead_origin = scraper_cfg.get("lead_origin", "c1_google_maps")
     scroll_px = scraper_cfg.get("scroll_amount_px", 450)
     default_prefix = scraper_cfg.get("default_phone_prefix", "+1")
+    niche, city = parse_niche_and_city(query, target_country)
 
-    url_template = scraper_cfg.get("search_url_template", "https://www.google.com/maps/search/{query}?hl=en")
     encoded_query = urllib.parse.quote_plus(query)
-    search_url = url_template.format(query=encoded_query)
+    if geo_coord:
+        lat, lon = geo_coord
+        zoom = config.get("scraper_c1", {}).get("geo_zoom", 13)
+        search_url = f"https://www.google.com/maps/search/{encoded_query}/@{lat},{lon},{zoom}z?hl=en"
+        logging.info(f"Opening Maps tile [{lat}, {lon}] for: '{query}'")
+    else:
+        url_template = scraper_cfg.get("search_url_template", "https://www.google.com/maps/search/{query}?hl=en")
+        search_url = url_template.format(query=encoded_query)
+        logging.info(f"Opening Maps query: '{query}'")
 
-    logging.info(f"Opening Maps query: '{query}'")
     try:
         await page.goto(search_url, timeout=scraper_cfg["navigation_timeout_ms"], wait_until="domcontentloaded")
     except Exception as e:
@@ -358,6 +398,7 @@ async def scrape_single_query(page: Page, query: str, config: dict) -> int:
                 # Tier 1: Extract Website & Phone directly from feed card (if present)
                 website_url = None
                 clean_domain = None
+                review_snippet = None
                 web_btn = card.locator(selectors["website_button"]).first
                 if await web_btn.count() > 0:
                     raw_href = await web_btn.get_attribute("href")
@@ -372,6 +413,16 @@ async def scrape_single_query(page: Page, query: str, config: dict) -> int:
                     phone_match = re.search(r"(\+?[0-9\s\-\(\)]{8,18}[0-9])", card_text)
                     if phone_match:
                         phone = phone_match.group(1)
+
+                if database.lead_exists(
+                    clean_domain=clean_domain,
+                    maps_place_id=place_id,
+                    business_name=business_name,
+                    city=city,
+                    db_path=db_path
+                ):
+                    logging.info(f"Skipping known lead (Tier 1): '{business_name}'")
+                    continue
 
                 # Tier 2: Automatic Detail Pane Fallback (for compact card layouts)
                 if not website_url or not phone:
@@ -430,6 +481,14 @@ async def scrape_single_query(page: Page, query: str, config: dict) -> int:
                                             if m:
                                                 phone = m.group(1).strip()
 
+                                snippet_elem = page.locator("span.wiI7pd").first
+                                if await snippet_elem.count() > 0:
+                                    try:
+                                        raw_snippet = (await snippet_elem.inner_text()).strip()
+                                        review_snippet = " ".join(raw_snippet.split())[:180]
+                                    except Exception:
+                                        pass
+
                             # Dismiss the detail pane and restore feed focus
                             await page.keyboard.press("Escape")
                             await page.wait_for_timeout(400)
@@ -437,11 +496,17 @@ async def scrape_single_query(page: Page, query: str, config: dict) -> int:
                             logging.debug(f"Detail pane extraction error for '{business_name}': {pane_err}")
 
                 clean_phone = clean_phone_number(phone, default_prefix)
-                excluded_domains = config.get("app", {}).get("excluded_domains", [])
 
                 # Deduplication Check against SQLite Master Archive
-                if database.is_duplicate(clean_domain=clean_domain, maps_place_id=place_id, clean_phone=clean_phone, db_path=db_path, excluded_domains=excluded_domains):
-                    logging.info(f"Duplicate skipped: '{business_name}' ({clean_domain or place_id})")
+                if database.lead_exists(
+                    clean_domain=clean_domain,
+                    maps_place_id=place_id,
+                    clean_phone=clean_phone,
+                    business_name=business_name,
+                    city=city,
+                    db_path=db_path
+                ):
+                    logging.info(f"Skipping duplicate lead from detail pane: '{business_name}'")
                     continue
 
                 niche, city = parse_niche_and_city(query, target_country)
@@ -463,7 +528,8 @@ async def scrape_single_query(page: Page, query: str, config: dict) -> int:
                     "lead_origin_pipeline": lead_origin,
                     "search_query_raw": query,
                     "primary_status": "Today",
-                    "sub_status": "Pending Evaluation"
+                    "sub_status": "Pending Evaluation",
+                    "review_snippet": review_snippet
                 }
 
                 database.insert_lead(lead_payload, db_path=db_path)
@@ -525,20 +591,61 @@ async def run_maps_scraper(config) -> int:
 
         page = context.pages[0] if context.pages else await context.new_page()
 
-        # Stealth CDP override
+        # Enhanced stealth CDP override (preserves WebGL for Maps rendering)
         await page.add_init_script("""
+            // 1. Remove webdriver flag
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-            window.chrome = { runtime: {} };
+
+            // 2. Mock Chrome runtime
+            window.chrome = { runtime: {}, loadTimes: function() {}, csi: function() {}, app: {} };
+
+            // 3. Mock standard plugins array
+            Object.defineProperty(navigator, 'plugins', {
+                get: () => [1, 2, 3, 4, 5]
+            });
+
+            // 4. Subtle Canvas 2D jitter to prevent hardware fingerprint hash matching
+            const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
+            HTMLCanvasElement.prototype.toDataURL = function(type) {
+                if (this.width > 0 && this.height > 0 && this.width < 500) {
+                    const ctx = this.getContext('2d');
+                    if (ctx) {
+                        const shift = (Math.random() < 0.5 ? 1 : -1) * 0.0001;
+                        ctx.fillStyle = `rgba(255,255,255,${shift})`;
+                        ctx.fillRect(0, 0, 1, 1);
+                    }
+                }
+                return origToDataURL.apply(this, arguments);
+            };
         """)
 
+        geo_cfg = scraper_cfg.get("geo_grid", {})
+        use_grid = geo_cfg.get("enabled", False)
+        tiles = []
+        if use_grid and "center_lat" in geo_cfg and "center_lon" in geo_cfg:
+            tiles = generate_geo_tiles(
+                geo_cfg["center_lat"],
+                geo_cfg["center_lon"],
+                grid_size=geo_cfg.get("grid_size", 2),
+                step_deg=geo_cfg.get("step_deg", 0.04)
+            )
+
         for query in scraper_cfg.get("target_queries", []):
-            count = await scrape_single_query(page, query, config)
-            total_harvested += count
-            # Query cooldown jitter
-            await page.wait_for_timeout(random.randint(
-                scraper_cfg["query_cooldown_min_ms"],
-                scraper_cfg["query_cooldown_max_ms"]
-            ))
+            if tiles:
+                for coord in tiles:
+                    count = await scrape_single_query(page, query, config, geo_coord=coord)
+                    total_harvested += count
+                    await page.wait_for_timeout(random.randint(
+                        scraper_cfg.get("query_cooldown_min_ms", 2500),
+                        scraper_cfg.get("query_cooldown_max_ms", 5000)
+                    ))
+            else:
+                count = await scrape_single_query(page, query, config)
+                total_harvested += count
+                await page.wait_for_timeout(random.randint(
+                    scraper_cfg.get("query_cooldown_min_ms", 2500),
+                    scraper_cfg.get("query_cooldown_max_ms", 5000)
+                ))
 
         await context.close()
 

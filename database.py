@@ -1,4 +1,6 @@
+import difflib
 import json
+import re
 import sqlite3
 import uuid
 from typing import Optional, Dict, Any, List
@@ -81,13 +83,95 @@ def init_db(db_path: Optional[str] = None) -> None:
                 )
             """)
 
+            # Safe auto-migration for V2 Contact Intelligence fields
+            v2_columns = [
+                ("facebook_url", "TEXT"),
+                ("form_url", "TEXT"),
+                ("line_type", "TEXT DEFAULT 'Unknown'"),
+                ("review_snippet", "TEXT")
+            ]
+            for col_name, col_type in v2_columns:
+                try:
+                    cursor.execute(f"ALTER TABLE leads ADD COLUMN {col_name} {col_type};")
+                except sqlite3.OperationalError:
+                    pass  # Column already exists
+
             # Speed indexes for O(1) deduplication and queue queries
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_clean_domain ON leads(clean_domain)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_maps_place_id ON leads(maps_place_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_clean_phone ON leads(clean_phone)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_leads_clean_phone ON leads(clean_phone);")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_status ON leads(primary_status, sub_status)")
     finally:
         conn.close()
+
+
+def normalize_business_name(name: str) -> str:
+    """Removes common corporate legal suffixes and punctuation for fuzzy de-aliasing."""
+    if not name:
+        return ""
+    cleaned = name.lower()
+    cleaned = re.sub(r"[^\w\s]", " ", cleaned)
+    # Strip common corporate suffixes
+    cleaned = re.sub(r"\b(llc|inc|corp|corporation|co|company|ltd|limited)\b", "", cleaned)
+    return " ".join(cleaned.split())
+
+
+def lead_exists(
+    clean_domain: Optional[str] = None,
+    maps_place_id: Optional[str] = None,
+    clean_phone: Optional[str] = None,
+    business_name: Optional[str] = None,
+    city: Optional[str] = None,
+    db_path: Optional[str] = None,
+    fuzzy_threshold: float = 0.88
+) -> bool:
+    """
+    Checks if a lead already exists in SQLite using place_id, clean_domain, clean_phone,
+    or fuzzy business name similarity within the same city.
+    """
+    if not clean_domain and not maps_place_id and not clean_phone and not business_name:
+        return False
+
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+
+        if maps_place_id:
+            cursor.execute("SELECT 1 FROM leads WHERE maps_place_id = ? LIMIT 1", (maps_place_id,))
+            if cursor.fetchone():
+                return True
+
+        if clean_domain:
+            cursor.execute("SELECT 1 FROM leads WHERE clean_domain = ? LIMIT 1", (clean_domain,))
+            if cursor.fetchone():
+                return True
+
+        # Deduplicate on clean phone (valid 10+ digit numbers)
+        if clean_phone and len(re.sub(r"\D", "", clean_phone)) >= 10:
+            norm_phone = re.sub(r"\D", "", clean_phone)[-10:]
+            cursor.execute(
+                "SELECT 1 FROM leads WHERE clean_phone LIKE ? LIMIT 1",
+                (f"%{norm_phone}%",)
+            )
+            if cursor.fetchone():
+                return True
+
+        # Fuzzy Entity De-Aliasing within the same target city
+        if business_name and city:
+            norm_candidate = normalize_business_name(business_name)
+            if len(norm_candidate) >= 4:
+                cursor.execute(
+                    "SELECT business_name FROM leads WHERE city = ? COLLATE NOCASE",
+                    (city,)
+                )
+                existing_names = [row["business_name"] for row in cursor.fetchall() if row["business_name"]]
+                for existing in existing_names:
+                    norm_existing = normalize_business_name(existing)
+                    ratio = difflib.SequenceMatcher(None, norm_candidate, norm_existing).ratio()
+                    if ratio >= fuzzy_threshold:
+                        return True
+
+        return False
 
 
 def is_duplicate(
@@ -127,6 +211,14 @@ def is_duplicate(
             cursor.execute("SELECT 1 FROM leads WHERE clean_phone = ? LIMIT 1", (clean_phone,))
             if cursor.fetchone():
                 return True
+            if len(re.sub(r"\D", "", clean_phone)) >= 10:
+                norm_phone = re.sub(r"\D", "", clean_phone)[-10:]
+                cursor.execute(
+                    "SELECT 1 FROM leads WHERE clean_phone LIKE ? LIMIT 1",
+                    (f"%{norm_phone}%",)
+                )
+                if cursor.fetchone():
+                    return True
 
         return False
     finally:
@@ -146,7 +238,7 @@ def insert_lead(lead_data: Dict[str, Any], db_path: Optional[str] = None) -> int
         "maps_place_id", "maps_url", "rating", "review_count",
         "clean_domain", "website_url", "phone", "clean_phone",
         "lead_origin_pipeline", "search_query_raw",
-        "primary_status", "sub_status"
+        "primary_status", "sub_status", "review_snippet"
     ]
 
     keys_to_insert = [k for k in fields if k in lead_data]
@@ -202,7 +294,7 @@ def update_lead_audit(
         "load_time_sec", "ttfb_ms", "page_weight_mb", "dom_nodes",
         "mobile_broken", "cms_detected", "failed_major_test",
         "primary_flaw_label", "dm_name", "dm_title", "dm_email",
-        "dm_linkedin", "generic_email"
+        "dm_linkedin", "generic_email", "facebook_url", "form_url", "line_type"
     ]
 
     set_clauses = ["primary_status = ?", "sub_status = ?", "updated_at = CURRENT_TIMESTAMP"]

@@ -320,7 +320,14 @@ async def audit_single_site(
                 };
             }""")
 
-            html_content = await page.content()
+            try:
+                html_content = await page.content()
+            except Exception:
+                try:
+                    await page.wait_for_load_state("domcontentloaded", timeout=3000)
+                    html_content = await page.content()
+                except Exception:
+                    html_content = ""
             cms = detect_cms(html_content)
             dm_emails, generic_emails = extract_emails(html_content, generic_prefixes)
             dm_linkedin = extract_linkedin(html_content)

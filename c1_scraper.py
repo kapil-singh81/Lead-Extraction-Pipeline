@@ -257,17 +257,17 @@ async def extract_single_result(page: Page, query: str, config: dict) -> int:
 
 def generate_geo_tiles(center_lat: float, center_lon: float, grid_size: int = 2, step_deg: float = 0.04) -> List[Tuple[float, float]]:
     """
-    Generates an NxN grid of latitude/longitude coordinates centered on a target city.
+    Generates an exact NxN grid of latitude/longitude coordinates centered on target coordinates.
     step_deg=0.04 corresponds to ~4.5 km steps, bypassing Google Maps' 120-listing viewport cap.
     """
     tiles = []
-    half = grid_size // 2
-    for i in range(-half, half + 1):
-        for j in range(-half, half + 1):
-            lat = round(center_lat + (i * step_deg), 4)
-            lon = round(center_lon + (j * step_deg), 4)
+    offset_start = -(grid_size - 1) / 2.0
+    for i in range(grid_size):
+        for j in range(grid_size):
+            lat = round(center_lat + ((offset_start + i) * step_deg), 4)
+            lon = round(center_lon + ((offset_start + j) * step_deg), 4)
             tiles.append((lat, lon))
-    return list(dict.fromkeys(tiles))  # Preserve unique coordinate pairs
+    return list(dict.fromkeys(tiles))
 
 
 async def scrape_single_query(page: Page, query: str, config: dict, geo_coord: Optional[Tuple[float, float]] = None) -> int:
@@ -288,7 +288,8 @@ async def scrape_single_query(page: Page, query: str, config: dict, geo_coord: O
     encoded_query = urllib.parse.quote_plus(query)
     if geo_coord:
         lat, lon = geo_coord
-        zoom = config.get("scraper_c1", {}).get("geo_zoom", 13)
+        geo_cfg = scraper_cfg.get("geo_grid", {})
+        zoom = geo_cfg.get("geo_zoom", scraper_cfg.get("geo_zoom", 13))
         search_url = f"https://www.google.com/maps/search/{encoded_query}/@{lat},{lon},{zoom}z?hl=en"
         logging.info(f"Opening Maps tile [{lat}, {lon}] for: '{query}'")
     else:
@@ -360,7 +361,7 @@ async def scrape_single_query(page: Page, query: str, config: dict, geo_coord: O
                 place_id = extract_place_id(maps_url)
 
                 # Early deduplication: skip before any DOM interaction or detail pane click
-                if place_id and database.is_duplicate(maps_place_id=place_id, db_path=db_path):
+                if place_id and database.lead_exists(maps_place_id=place_id, db_path=db_path):
                     logging.info(f"Duplicate skipped (early place_id check): {place_id}")
                     continue
 
@@ -414,6 +415,15 @@ async def scrape_single_query(page: Page, query: str, config: dict, geo_coord: O
                     if phone_match:
                         phone = phone_match.group(1)
 
+                snippet_elem = card.locator("span.wiI7pd, div.W4Efsd > span").first
+                if await snippet_elem.count() > 0:
+                    try:
+                        raw_snippet = (await snippet_elem.inner_text()).strip()
+                        if len(raw_snippet) >= 15:
+                            review_snippet = " ".join(raw_snippet.split())[:180]
+                    except Exception:
+                        pass
+
                 if database.lead_exists(
                     clean_domain=clean_domain,
                     maps_place_id=place_id,
@@ -424,8 +434,9 @@ async def scrape_single_query(page: Page, query: str, config: dict, geo_coord: O
                     logging.info(f"Skipping known lead (Tier 1): '{business_name}'")
                     continue
 
-                # Tier 2: Automatic Detail Pane Fallback (for compact card layouts)
-                if not website_url or not phone:
+                # Tier 2: Automatic Detail Pane Fallback (for missing fields or review snippet)
+                needs_detail_pane = (not website_url) or (not phone) or (review_count > 0 and not review_snippet)
+                if needs_detail_pane:
                     click_target = card.locator(selectors.get("card_click_anchor", "a.hfpxzc")).first
                     if await click_target.count() > 0:
                         try:

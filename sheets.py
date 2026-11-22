@@ -57,7 +57,7 @@ def mark_leads_as_synced(lead_uuids: List[str], db_path: str) -> None:
 
 
 def format_lead_row(lead: Dict[str, Any]) -> List[Any]:
-    """Maps a lead dictionary to an ordered 29-column row matching SHEET_HEADERS."""
+    """Maps a lead dictionary to an ordered 33-column row matching SHEET_HEADERS."""
     return [
         str(lead.get("lead_uuid") or ""),
         str(lead.get("business_name") or ""),

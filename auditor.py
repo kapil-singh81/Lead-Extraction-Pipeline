@@ -173,18 +173,20 @@ def classify_phone_line(clean_phone: Optional[str], db_path: Optional[str] = Non
 
         # Safe query if an offline prefix table exists in SQLite
         if db_path:
+            conn = database.get_connection(db_path)
             try:
-                with database.get_connection(db_path) as conn:
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        "SELECT line_type FROM phone_prefixes WHERE npa = ? AND nxx = ? LIMIT 1",
-                        (area_code, nxx)
-                    )
-                    row = cursor.fetchone()
-                    if row and row["line_type"]:
-                        return str(row["line_type"]).capitalize()
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT line_type FROM phone_prefixes WHERE npa = ? AND nxx = ? LIMIT 1",
+                    (area_code, nxx)
+                )
+                row = cursor.fetchone()
+                if row and row["line_type"]:
+                    return str(row["line_type"]).capitalize()
             except Exception:
                 pass
+            finally:
+                conn.close()
 
         return "Local (US)"
 
@@ -373,6 +375,7 @@ async def audit_single_site(
                 generic_email=chosen_generic_email
             )
 
+            phone_line_type = classify_phone_line(lead.get("clean_phone"), db_path=db_path)
             audit_payload = {
                 "load_time_sec": load_time_sec,
                 "ttfb_ms": ttfb_ms,
@@ -388,7 +391,8 @@ async def audit_single_site(
                 "dm_linkedin": dm_linkedin,
                 "generic_email": chosen_generic_email,
                 "facebook_url": metrics.get("facebook_url"),
-                "form_url": metrics.get("form_url")
+                "form_url": metrics.get("form_url"),
+                "line_type": phone_line_type
             }
 
             database.update_lead_audit(lead_id, audit_payload, primary_status, sub_status, db_path=db_path)
@@ -396,6 +400,7 @@ async def audit_single_site(
 
         except Exception as e:
             logging.warning(f"Audit failed for ID {lead_id} ({url}): {e}")
+            phone_line_type = classify_phone_line(lead.get("clean_phone"), db_path=db_path)
             payload = {
                 "load_time_sec": -1.0,
                 "ttfb_ms": -1,
@@ -403,7 +408,8 @@ async def audit_single_site(
                 "dom_nodes": 0,
                 "mobile_broken": 0,
                 "failed_major_test": 1,
-                "primary_flaw_label": f"Site Unreachable: {str(e)[:50]}"
+                "primary_flaw_label": f"Site Unreachable: {str(e)[:50]}",
+                "line_type": phone_line_type
             }
             primary_status, sub_status = determine_lead_status(
                 has_major_flaw=True,
@@ -459,14 +465,17 @@ def recover_missing_website(business_name: str, city: str) -> Optional[str]:
 def process_no_website_leads(config: Dict[str, Any]) -> int:
     """Classifies Path B leads (no website) directly without browser audit."""
     db_path = config["app"]["db_path"]
-    with database.get_connection(db_path) as conn:
+    conn = database.get_connection(db_path)
+    try:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT id, clean_phone, business_name, city, review_count FROM leads
             WHERE (website_url IS NULL OR website_url = '')
               AND primary_status = 'Today'
         """)
-        leads = cursor.fetchall()
+        leads = [dict(row) for row in cursor.fetchall()]
+    finally:
+        conn.close()
 
     count = 0
     for lead in leads:
@@ -491,7 +500,12 @@ def process_no_website_leads(config: Dict[str, Any]) -> int:
                 logging.info(f"Recovered unlisted website for '{business_name}': {recovered_url}")
                 continue  # Skip marking as No Website; queued for normal audit
 
-        flaw = {"failed_major_test": 1, "primary_flaw_label": "No Website Present"}
+        phone_line_type = classify_phone_line(phone, db_path=db_path)
+        flaw = {
+            "failed_major_test": 1,
+            "primary_flaw_label": "No Website Present",
+            "line_type": phone_line_type
+        }
         primary_status, sub_status = determine_lead_status(
             has_major_flaw=True,
             is_unreachable=False,
@@ -516,10 +530,7 @@ async def run_site_auditor(config) -> None:
 
     database.init_db(config["app"]["db_path"])
 
-    # 1. Process Path B leads (No Website)
-    process_no_website_leads(config)
-
-    # 2. Process Path A leads (Has Website)
+    # Process Path A leads (Has Website)
     leads_to_audit = database.get_unaudited_leads(config["app"]["db_path"])
     if not leads_to_audit:
         logging.info("No websites pending audit.")
@@ -546,4 +557,10 @@ run_audit_pipeline = run_site_auditor
 
 
 if __name__ == "__main__":
-    asyncio.run(run_site_auditor("config.json"))
+    async def _standalone_run():
+        with open("config.json", "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        process_no_website_leads(cfg)
+        await run_site_auditor(cfg)
+
+    asyncio.run(_standalone_run())

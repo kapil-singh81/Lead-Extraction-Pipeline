@@ -7,6 +7,7 @@ credentials.json
 lead_pipeline.db
 lead_pipeline.db-wal
 lead_pipeline.db-shm
+*.bak
 
 # Chrome Automation Profiles & Sessions
 chrome_lead_profile/
@@ -24,6 +25,12 @@ __pycache__/
 
 # Logs
 *.log
+
+# Test Files, Sandboxes & Temporary Configs
+test_*.py
+test_*.db*
+test_*.json
+*sandbox*.db*
 
 # OS Specific
 .DS_Store

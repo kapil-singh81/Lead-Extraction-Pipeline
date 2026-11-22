@@ -79,7 +79,13 @@ def init_db(db_path: Optional[str] = None) -> None:
                     primary_status TEXT NOT NULL DEFAULT 'Today',
                     sub_status TEXT NOT NULL DEFAULT 'Pending Evaluation',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+                    -- V2 Contact Intelligence & Reviews
+                    facebook_url TEXT,
+                    form_url TEXT,
+                    line_type TEXT DEFAULT 'Unknown',
+                    review_snippet TEXT
                 )
             """)
 
@@ -100,7 +106,6 @@ def init_db(db_path: Optional[str] = None) -> None:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_clean_domain ON leads(clean_domain)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_maps_place_id ON leads(maps_place_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_clean_phone ON leads(clean_phone)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_leads_clean_phone ON leads(clean_phone);")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_status ON leads(primary_status, sub_status)")
     finally:
         conn.close()
@@ -369,21 +374,25 @@ def clean_corrupted_v1_data(db_path: Optional[str] = None) -> None:
             print(f"[clean] Nulled aclk website_url/clean_domain on {aclk_rows_fixed} row(s).")
 
             # ------------------------------------------------------------------ #
-            # 3. Re-evaluate qualification status for affected leads             #
-            #    Condition: dm_email is now NULL AND dm_linkedin is also NULL    #
-            #    and the lead was previously considered contactable.             #
+            # 3. Re-evaluate qualification status for affected leads (V2 Aware)  #
             # ------------------------------------------------------------------ #
             cursor.execute("""
                 UPDATE leads
-                SET primary_status = 'Missing Info',
-                    sub_status      = 'Needs DM Contact',
-                    updated_at      = CURRENT_TIMESTAMP
-                WHERE dm_email   IS NULL
+                SET primary_status = CASE
+                        WHEN clean_phone IS NOT NULL AND length(clean_phone) >= 7 THEN 'Outreach Ready'
+                        ELSE 'Missing Info'
+                    END,
+                    sub_status = CASE
+                        WHEN clean_phone IS NOT NULL AND length(clean_phone) >= 7 THEN 'Direct Phone Available'
+                        ELSE 'Needs Contact Info'
+                    END,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE dm_email IS NULL
                   AND dm_linkedin IS NULL
                   AND primary_status NOT IN ('Today', 'Disqualified')
             """)
             requalified = cursor.rowcount
-            print(f"[clean] Re-qualified {requalified} lead(s) to 'Missing Info / Needs DM Contact'.")
+            print(f"[clean] Re-qualified {requalified} lead(s) using V2 multi-channel rules.")
 
             # ------------------------------------------------------------------ #
             # 4. Remove repaired leads from sync_log so they re-export cleanly  #
@@ -392,10 +401,9 @@ def clean_corrupted_v1_data(db_path: Optional[str] = None) -> None:
                 DELETE FROM sync_log
                 WHERE lead_uuid IN (
                     SELECT lead_uuid FROM leads
-                    WHERE dm_email   IS NULL
+                    WHERE dm_email IS NULL
                       AND dm_linkedin IS NULL
-                      AND primary_status = 'Missing Info'
-                      AND sub_status     = 'Needs DM Contact'
+                      AND primary_status IN ('Outreach Ready', 'Missing Info')
                 )
             """)
             sync_cleared = cursor.rowcount

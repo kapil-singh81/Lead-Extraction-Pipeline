@@ -180,6 +180,89 @@
     </div>
     {% endif %}
 
+    <!-- Quick 1-Click Action Bar -->
+    <div class="action-bar-container">
+      <div class="action-bar-title">Quick 1-Click Actions</div>
+
+      <div class="action-buttons-row">
+        {% if lead.whatsapp_launch_url or (lead.pitches and lead.pitches.digits) %}
+        <a href="{{ lead.whatsapp_launch_url or ('https://wa.me/' ~ lead.pitches.digits) }}" target="_blank"
+          rel="noopener noreferrer" id="btn-wa-launcher-{{ lead.id }}" class="btn-action btn-wa-launcher"
+          onclick="syncActiveTextareaToWa(this, '{{ lead.id }}')"
+          title="Direct link hopping to open WhatsApp with recommended message">
+          💬 Open WhatsApp ↗
+        </a>
+        {% endif %}
+
+        <button class="btn-action btn-channel btn-wb-sent"
+          hx-post="/api/leads/{{ lead.id }}/action"
+          hx-include="#tracked-pitch-{{ lead.id }}, #pitch-textarea-{{ lead.id }}"
+          hx-vals='{"action": "contacted", "channel": "whatsapp"{% if in_grid %}, "in_grid": "true"{% endif %}}'
+          hx-target="{% if in_grid %}#lead-card-{{ lead.id }}{% else %}#queue-card-container{% endif %}"
+          hx-swap="{% if in_grid %}outerHTML{% else %}innerHTML{% endif %}"
+          title="Log WhatsApp touch and advance queue">
+          WB Sent
+        </button>
+
+        <button class="btn-action btn-channel btn-channel-fb" hx-post="/api/leads/{{ lead.id }}/action"
+          hx-include="#tracked-pitch-{{ lead.id }}, #pitch-textarea-{{ lead.id }}"
+          hx-vals='{"action": "contacted", "channel": "facebook"{% if in_grid %}, "in_grid": "true"{% endif %}}'
+          hx-target="{% if in_grid %}#lead-card-{{ lead.id }}{% else %}#queue-card-container{% endif %}"
+          hx-swap="{% if in_grid %}outerHTML{% else %}innerHTML{% endif %}"
+          title="Log Facebook touch and advance queue">
+          📘 FB Sent
+        </button>
+
+        <button class="btn-action btn-channel" hx-post="/api/leads/{{ lead.id }}/action"
+          hx-include="#tracked-pitch-{{ lead.id }}, #pitch-textarea-{{ lead.id }}"
+          hx-vals='{"action": "contacted", "channel": "phone"{% if in_grid %}, "in_grid": "true"{% endif %}}'
+          hx-target="{% if in_grid %}#lead-card-{{ lead.id }}{% else %}#queue-card-container{% endif %}"
+          hx-swap="{% if in_grid %}outerHTML{% else %}innerHTML{% endif %}">
+          📞 Call Logged
+        </button>
+
+        <button class="btn-action btn-channel" hx-post="/api/leads/{{ lead.id }}/action"
+          hx-include="#tracked-pitch-{{ lead.id }}, #pitch-textarea-{{ lead.id }}"
+          hx-vals='{"action": "contacted", "channel": "email"{% if in_grid %}, "in_grid": "true"{% endif %}}'
+          hx-target="{% if in_grid %}#lead-card-{{ lead.id }}{% else %}#queue-card-container{% endif %}"
+          hx-swap="{% if in_grid %}outerHTML{% else %}innerHTML{% endif %}">
+          ✉️ Email Sent
+        </button>
+
+        <button class="btn-action btn-channel" hx-post="/api/leads/{{ lead.id }}/action"
+          hx-include="#tracked-pitch-{{ lead.id }}, #pitch-textarea-{{ lead.id }}"
+          hx-vals='{"action": "contacted", "channel": "form"{% if in_grid %}, "in_grid": "true"{% endif %}}'
+          hx-target="{% if in_grid %}#lead-card-{{ lead.id }}{% else %}#queue-card-container{% endif %}"
+          hx-swap="{% if in_grid %}outerHTML{% else %}innerHTML{% endif %}">
+          📝 Form Filled
+        </button>
+
+        <button class="btn-action btn-missing" hx-post="/api/leads/{{ lead.id }}/action"
+          hx-include="#tracked-pitch-{{ lead.id }}, #pitch-textarea-{{ lead.id }}"
+          hx-vals='{"action": "missing_info", "reason": "Moved to Research"{% if in_grid %}, "in_grid": "true"{% endif %}}'
+          hx-target="{% if in_grid %}#lead-card-{{ lead.id }}{% else %}#queue-card-container{% endif %}"
+          hx-swap="{% if in_grid %}outerHTML{% else %}innerHTML{% endif %}">
+          🔍 Missing Info
+        </button>
+
+        <button class="btn-action btn-defer" hx-post="/api/leads/{{ lead.id }}/action"
+          hx-include="#tracked-pitch-{{ lead.id }}, #pitch-textarea-{{ lead.id }}"
+          hx-vals='{"action": "defer"{% if in_grid %}, "in_grid": "true"{% endif %}}'
+          hx-target="{% if in_grid %}#lead-card-{{ lead.id }}{% else %}#queue-card-container{% endif %}"
+          hx-swap="{% if in_grid %}outerHTML{% else %}innerHTML{% endif %}">
+          ⏳ Defer 24h
+        </button>
+
+        <button class="btn-action btn-disqualify" hx-post="/api/leads/{{ lead.id }}/action"
+          hx-include="#tracked-pitch-{{ lead.id }}, #pitch-textarea-{{ lead.id }}"
+          hx-vals='{"action": "disqualified", "reason": "Site looks fine"{% if in_grid %}, "in_grid": "true"{% endif %}}'
+          hx-target="{% if in_grid %}#lead-card-{{ lead.id }}{% else %}#queue-card-container{% endif %}"
+          hx-swap="{% if in_grid %}outerHTML{% else %}innerHTML{% endif %}">
+          ❌ Disqualify
+        </button>
+      </div>
+    </div>
+
     <!-- Organized Outreach Channel & Status Manager (Shown on Contacted Page individual cards; removed from main queue panel) -->
     {% if is_contacted_page %}
     <div class="channel-status-manager">
@@ -254,89 +337,6 @@
       </form>
     </div>
     {% endif %}
-
-    <!-- Quick 1-Click Action Bar -->
-    <div class="action-bar-container">
-      <div class="action-bar-title">Quick 1-Click Actions</div>
-
-      <div class="action-buttons-row">
-        {% if lead.whatsapp_launch_url or (lead.pitches and lead.pitches.digits) %}
-        <a href="{{ lead.whatsapp_launch_url or ('https://wa.me/' ~ lead.pitches.digits) }}" target="_blank"
-          rel="noopener noreferrer" id="btn-wa-launcher-{{ lead.id }}" class="btn-action btn-wa-launcher"
-          onclick="syncActiveTextareaToWa(this, '{{ lead.id }}')"
-          title="Direct link hopping to open WhatsApp with recommended message">
-          💬 Open WhatsApp ↗
-        </a>
-        {% endif %}
-
-        <button class="btn-action btn-channel" style="border-color: #22c55e; color: #15803d;"
-          hx-post="/api/leads/{{ lead.id }}/action"
-          hx-include="#tracked-pitch-{{ lead.id }}, #pitch-textarea-{{ lead.id }}"
-          hx-vals='{"action": "contacted", "channel": "whatsapp"{% if in_grid %}, "in_grid": "true"{% endif %}}'
-          hx-target="{% if in_grid %}#lead-card-{{ lead.id }}{% else %}#queue-card-container{% endif %}"
-          hx-swap="{% if in_grid %}outerHTML{% else %}innerHTML{% endif %}"
-          title="Log WhatsApp touch and advance queue">
-          💬 WhatsApp Message Sent
-        </button>
-
-        <button class="btn-action btn-channel btn-channel-fb" hx-post="/api/leads/{{ lead.id }}/action"
-          hx-include="#tracked-pitch-{{ lead.id }}, #pitch-textarea-{{ lead.id }}"
-          hx-vals='{"action": "contacted", "channel": "facebook"{% if in_grid %}, "in_grid": "true"{% endif %}}'
-          hx-target="{% if in_grid %}#lead-card-{{ lead.id }}{% else %}#queue-card-container{% endif %}"
-          hx-swap="{% if in_grid %}outerHTML{% else %}innerHTML{% endif %}"
-          title="Log Facebook touch and advance queue">
-          📘 FB Sent
-        </button>
-
-        <button class="btn-action btn-channel" hx-post="/api/leads/{{ lead.id }}/action"
-          hx-include="#tracked-pitch-{{ lead.id }}, #pitch-textarea-{{ lead.id }}"
-          hx-vals='{"action": "contacted", "channel": "phone"{% if in_grid %}, "in_grid": "true"{% endif %}}'
-          hx-target="{% if in_grid %}#lead-card-{{ lead.id }}{% else %}#queue-card-container{% endif %}"
-          hx-swap="{% if in_grid %}outerHTML{% else %}innerHTML{% endif %}">
-          📞 Call Logged
-        </button>
-
-        <button class="btn-action btn-channel" hx-post="/api/leads/{{ lead.id }}/action"
-          hx-include="#tracked-pitch-{{ lead.id }}, #pitch-textarea-{{ lead.id }}"
-          hx-vals='{"action": "contacted", "channel": "email"{% if in_grid %}, "in_grid": "true"{% endif %}}'
-          hx-target="{% if in_grid %}#lead-card-{{ lead.id }}{% else %}#queue-card-container{% endif %}"
-          hx-swap="{% if in_grid %}outerHTML{% else %}innerHTML{% endif %}">
-          ✉️ Email Sent
-        </button>
-
-        <button class="btn-action btn-channel" hx-post="/api/leads/{{ lead.id }}/action"
-          hx-include="#tracked-pitch-{{ lead.id }}, #pitch-textarea-{{ lead.id }}"
-          hx-vals='{"action": "contacted", "channel": "form"{% if in_grid %}, "in_grid": "true"{% endif %}}'
-          hx-target="{% if in_grid %}#lead-card-{{ lead.id }}{% else %}#queue-card-container{% endif %}"
-          hx-swap="{% if in_grid %}outerHTML{% else %}innerHTML{% endif %}">
-          📝 Form Filled
-        </button>
-
-        <button class="btn-action btn-missing" hx-post="/api/leads/{{ lead.id }}/action"
-          hx-include="#tracked-pitch-{{ lead.id }}, #pitch-textarea-{{ lead.id }}"
-          hx-vals='{"action": "missing_info", "reason": "Moved to Research"{% if in_grid %}, "in_grid": "true"{% endif %}}'
-          hx-target="{% if in_grid %}#lead-card-{{ lead.id }}{% else %}#queue-card-container{% endif %}"
-          hx-swap="{% if in_grid %}outerHTML{% else %}innerHTML{% endif %}">
-          🔍 Missing Info
-        </button>
-
-        <button class="btn-action btn-defer" hx-post="/api/leads/{{ lead.id }}/action"
-          hx-include="#tracked-pitch-{{ lead.id }}, #pitch-textarea-{{ lead.id }}"
-          hx-vals='{"action": "defer"{% if in_grid %}, "in_grid": "true"{% endif %}}'
-          hx-target="{% if in_grid %}#lead-card-{{ lead.id }}{% else %}#queue-card-container{% endif %}"
-          hx-swap="{% if in_grid %}outerHTML{% else %}innerHTML{% endif %}">
-          ⏳ Defer 24h
-        </button>
-
-        <button class="btn-action btn-disqualify" hx-post="/api/leads/{{ lead.id }}/action"
-          hx-include="#tracked-pitch-{{ lead.id }}, #pitch-textarea-{{ lead.id }}"
-          hx-vals='{"action": "disqualified", "reason": "Site looks fine"{% if in_grid %}, "in_grid": "true"{% endif %}}'
-          hx-target="{% if in_grid %}#lead-card-{{ lead.id }}{% else %}#queue-card-container{% endif %}"
-          hx-swap="{% if in_grid %}outerHTML{% else %}innerHTML{% endif %}">
-          ❌ Disqualify
-        </button>
-      </div>
-    </div>
 
   </div> <!-- End card-view-content-{{ lead.id }} -->
 

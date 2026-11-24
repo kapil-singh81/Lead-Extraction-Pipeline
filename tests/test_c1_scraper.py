@@ -216,6 +216,8 @@ def test_probe_page_leak_guard_closes_in_finally(tmp_path):
 
         await c1_scraper.extract_single_result(mock_page, "leak guard query", config)
         assert mock_probe.close.called, "probe_page.close was not called in finally!"
+        saved_lead = database.get_lead_by_id(1, db_path=db_file)
+        assert saved_lead["review_count"] == 0
 
     asyncio.run(run())
 

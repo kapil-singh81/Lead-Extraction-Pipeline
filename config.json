@@ -268,5 +268,54 @@
       "group",
       "company"
     ]
+  },
+  "outreach_channels": {
+    "reply_outcomes": [
+      "replied"
+    ],
+    "platforms": {
+      "whatsapp": {
+        "label": "WhatsApp",
+        "bg": "#dcfce7",
+        "fg": "#15803d",
+        "border": "#86efac"
+      },
+      "facebook": {
+        "label": "Facebook",
+        "bg": "#dbeafe",
+        "fg": "#1d4ed8",
+        "border": "#93c5fd"
+      },
+      "instagram": {
+        "label": "Instagram",
+        "bg": "#fce7f3",
+        "fg": "#db2777",
+        "border": "#f9a8d4"
+      },
+      "email": {
+        "label": "Cold Email",
+        "bg": "#fee2e2",
+        "fg": "#dc2626",
+        "border": "#fca5a5"
+      },
+      "phone": {
+        "label": "Phone Call",
+        "bg": "#111827",
+        "fg": "#ffffff",
+        "border": "#111827"
+      },
+      "form": {
+        "label": "Contact Form",
+        "bg": "#fdfbf7",
+        "fg": "#44403c",
+        "border": "#d6cfc2"
+      },
+      "linkedin": {
+        "label": "LinkedIn",
+        "bg": "#f5ebe0",
+        "fg": "#6b3e26",
+        "border": "#b08968"
+      }
+    }
   }
 }

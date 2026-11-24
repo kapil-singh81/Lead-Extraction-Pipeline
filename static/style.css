@@ -3150,3 +3150,54 @@ html.dark .ctrl-textarea {
   background: #16a34a;
   transform: translateY(-1px);
 }
+
+/* Contacted Table Icon-Only Platform Badges & WB Sent Button */
+.tbl-ch-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+}
+
+.tbl-ch-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+
+html.dark .tbl-ch-icon.ch-phone {
+  background: #0a0a0a !important;
+  color: #ffffff !important;
+  border-color: #52525b !important;
+}
+
+html.dark .tbl-ch-icon.ch-form {
+  background: #f5f0e6 !important;
+  color: #292524 !important;
+  border-color: #d6cfc2 !important;
+}
+
+.btn-wb-sent {
+  background: #dcfce7;
+  border-color: #16a34a;
+  color: #15803d;
+  font-weight: 600;
+}
+
+.btn-wb-sent:hover {
+  background: #bbf7d0;
+  border-color: #15803d;
+}
+
+html.dark .btn-wb-sent {
+  background: rgba(22, 163, 74, 0.2);
+  border-color: #22c55e;
+  color: #4ade80;
+}

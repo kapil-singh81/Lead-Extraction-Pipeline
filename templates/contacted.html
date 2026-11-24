@@ -243,78 +243,76 @@
 
         <!-- Channel & Timestamp -->
         <td>
-          {% set ch = c_lead.last_channel | lower %}
-          {% if ch == 'whatsapp' %}
-          <span class="channel-pill"
-            style="background: rgba(34, 197, 94, 0.15); color: #22c55e; border-color: rgba(34, 197, 94, 0.3); font-weight: 600;">
-            💬 WhatsApp
-          </span>
-          {% elif ch == 'phone' %}
-          <span class="channel-pill"
-            style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; border-color: rgba(59, 130, 246, 0.3); font-weight: 600;">
-            📞 Phone Call
-          </span>
-          {% elif ch == 'email' %}
-          <span class="channel-pill"
-            style="background: rgba(168, 85, 247, 0.15); color: #c084fc; border-color: rgba(168, 85, 247, 0.3); font-weight: 600;">
-            ✉️ Cold Email
-          </span>
-          {% elif ch == 'form' %}
-          <span class="channel-pill"
-            style="background: rgba(245, 158, 11, 0.15); color: #fbbf24; border-color: rgba(245, 158, 11, 0.3); font-weight: 600;">
-            📝 Contact Form
-          </span>
-          {% elif ch == 'facebook' %}
-          <span class="channel-pill"
-            style="background: rgba(37, 99, 235, 0.15); color: #3b82f6; border-color: rgba(37, 99, 235, 0.3); font-weight: 600;">
-            📘 Facebook
-          </span>
+          {% set ch_list = c_lead.contacted_channels or [] %}
+          {% if ch_list %}
+          <div class="tbl-ch-list">
+            {% for ch_item in ch_list %}
+            {% include "partials/_channel_table_icons.html" %}
+            {% endfor %}
+          </div>
           {% else %}
           <span class="status-badge contacted">
-            {{ ch | title }}
+            {{ (c_lead.last_channel | default('unknown')) | title }}
           </span>
           {% endif %}
-          <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 5px;">
             ⏱️ {{ c_lead.contacted_at | default(c_lead.updated_at) }}
           </div>
         </td>
 
-        <!-- Channel & Timestamp -->
+        <!-- Direct Contact Info -->
         <td>
-          {% set ch = c_lead.last_channel | lower %}
-          {% if ch == 'whatsapp' %}
-          <span class="channel-pill"
-            style="background: rgba(34, 197, 94, 0.15); color: #22c55e; border-color: rgba(34, 197, 94, 0.3); font-weight: 600;">
-            💬 WhatsApp
-          </span>
-          {% elif ch == 'phone' %}
-          <span class="channel-pill"
-            style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; border-color: rgba(59, 130, 246, 0.3); font-weight: 600;">
-            📞 Phone Call
-          </span>
-          {% elif ch == 'email' %}
-          <span class="channel-pill"
-            style="background: rgba(168, 85, 247, 0.15); color: #c084fc; border-color: rgba(168, 85, 247, 0.3); font-weight: 600;">
-            ✉️ Cold Email
-          </span>
-          {% elif ch == 'form' %}
-          <span class="channel-pill"
-            style="background: rgba(245, 158, 11, 0.15); color: #fbbf24; border-color: rgba(245, 158, 11, 0.3); font-weight: 600;">
-            📝 Contact Form
-          </span>
-          {% elif ch == 'facebook' %}
-          <span class="channel-pill"
-            style="background: rgba(37, 99, 235, 0.15); color: #3b82f6; border-color: rgba(37, 99, 235, 0.3); font-weight: 600;">
-            📘 Facebook
-          </span>
-          {% else %}
-          <span class="status-badge contacted">
-            {{ ch | title }}
-          </span>
-          {% endif %}
-          <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
-            ⏱️ {{ c_lead.contacted_at | default(c_lead.updated_at) }}
+          {% if c_lead.clean_phone or c_lead.phone %}
+          <div>
+            <a href="tel:{{ c_lead.clean_phone | default(c_lead.phone) }}" class="table-link"
+              onclick="event.stopPropagation()">
+              📞 {{ c_lead.clean_phone | default(c_lead.phone) }}
+            </a>
           </div>
+          {% endif %}
+          {% if c_lead.dm_email or c_lead.generic_email %}
+          <div style="font-size: 12px; margin-top: 2px;">
+            <a href="mailto:{{ c_lead.dm_email | default(c_lead.generic_email) }}" class="table-link"
+              onclick="event.stopPropagation()">
+              ✉️ {{ c_lead.dm_email | default(c_lead.generic_email) }}
+            </a>
+          </div>
+          {% endif %}
+          <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 3px; font-size: 11px;">
+            {% if c_lead.whatsapp_url %}
+            <a href="{{ c_lead.whatsapp_url | external_url }}" target="_blank" rel="noopener noreferrer"
+              class="table-link" style="color: #15803d; font-weight: 600;" onclick="event.stopPropagation()">
+              WhatsApp ↗
+            </a>
+            {% endif %}
+            {% if c_lead.facebook_url %}
+            <a href="{{ c_lead.facebook_url | external_url }}" target="_blank" rel="noopener noreferrer"
+              class="table-link" style="color: #2563eb; font-weight: 600;" onclick="event.stopPropagation()">
+              Facebook ↗
+            </a>
+            {% endif %}
+            {% if c_lead.instagram_url %}
+            <a href="{{ c_lead.instagram_url | external_url }}" target="_blank" rel="noopener noreferrer"
+              class="table-link" style="color: #db2777; font-weight: 600;" onclick="event.stopPropagation()">
+              Instagram ↗
+            </a>
+            {% endif %}
+            {% if c_lead.form_url %}
+            <a href="{{ c_lead.form_url | external_url }}" target="_blank" rel="noopener noreferrer"
+              class="table-link" style="color: #b45309; font-weight: 600;" onclick="event.stopPropagation()">
+              Form ↗
+            </a>
+            {% endif %}
+            {% if c_lead.dm_linkedin %}
+            <a href="{{ c_lead.dm_linkedin | external_url }}" target="_blank" rel="noopener noreferrer"
+              class="table-link" style="color: #6b3e26; font-weight: 600;" onclick="event.stopPropagation()">
+              LinkedIn ↗
+            </a>
+            {% endif %}
+          </div>
+          {% if not (c_lead.clean_phone or c_lead.phone or c_lead.dm_email or c_lead.generic_email or c_lead.whatsapp_url or c_lead.facebook_url or c_lead.instagram_url or c_lead.form_url or c_lead.dm_linkedin) %}
+          <span style="color: var(--text-muted); font-size: 12px;">—</span>
+          {% endif %}
         </td>
 
         <!-- Location / Niche -->

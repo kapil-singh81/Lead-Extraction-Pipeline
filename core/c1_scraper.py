@@ -325,12 +325,6 @@ async def extract_single_result(page: Page, query: str, config: dict, run_id: Op
             if probe_page and not probe_page.is_closed():
                 await probe_page.close()
 
-    # Ensure review count accurately accounts for actual Google profile total (Google Maps feed text omits ~3 rating-only reviews)
-    if review_count > 0:
-        review_count += 3
-    elif rating > 0:
-        review_count = 3
-
     # Extract website
     website_url = None
     clean_domain = None
@@ -740,9 +734,6 @@ async def scrape_single_query(page: Page, query: str, config: dict, geo_coord: O
                     logging.info(f"Skipping duplicate lead from detail pane: '{business_name}'")
                     continue
 
-                # Adjust review count to match actual Google profile total (Google Maps feed text omits ~3 rating-only reviews)
-                actual_review_count = (review_count + 3) if review_count > 0 else (3 if rating > 0 else 0)
-
                 # Stage New Record immediately into SQLite
                 lead_payload = {
                     "run_id": run_id,
@@ -753,7 +744,7 @@ async def scrape_single_query(page: Page, query: str, config: dict, geo_coord: O
                     "country": target_country,
                     "maps_url": maps_url,
                     "rating": rating,
-                    "review_count": actual_review_count,
+                    "review_count": review_count,
                     "clean_domain": clean_domain,
                     "website_url": website_url,
                     "phone": phone.strip() if phone else None,

@@ -824,6 +824,64 @@ def get_leads_master(
         conn.close()
 
 
+def extract_strategy_from_message(message_sent: Optional[str]) -> Optional[str]:
+    """Extracts the normalized [strategy_key] prefix from an outreach message string."""
+    if not message_sent:
+        return None
+    text = str(message_sent).strip()
+    if text.startswith("[") and "]" in text:
+        key = text[1:text.index("]")].strip().lower()
+        return key or None
+    return None
+
+
+def get_channel_last_strategy(lead_id: int, channel: str, db_path: Optional[str] = None) -> Optional[str]:
+    """Returns the most recent outreach strategy key logged for a given lead and channel."""
+    conn = get_connection(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT message_sent
+            FROM outreach_log
+            WHERE lead_id = ? AND LOWER(channel) = LOWER(?)
+            ORDER BY sent_at DESC, id DESC
+        """, (lead_id, channel))
+        for row in cursor.fetchall():
+            strategy = extract_strategy_from_message(row["message_sent"])
+            if strategy:
+                return strategy
+        return None
+    finally:
+        conn.close()
+
+
+def get_contacted_channels_map(cursor: sqlite3.Cursor, lead_ids: List[int]) -> Dict[int, List[Dict[str, Any]]]:
+    """Fetches distinct outreach channels per lead ordered by most recent usage."""
+    if not lead_ids:
+        return {}
+    placeholders = ",".join("?" for _ in lead_ids)
+    cursor.execute(f"""
+        SELECT
+            lead_id,
+            LOWER(channel) AS channel,
+            MAX(sent_at) AS last_sent_at,
+            COUNT(*) AS touch_count
+        FROM outreach_log
+        WHERE lead_id IN ({placeholders})
+        GROUP BY lead_id, LOWER(channel)
+        ORDER BY MAX(sent_at) DESC, MAX(id) DESC
+    """, lead_ids)
+
+    channels_map: Dict[int, List[Dict[str, Any]]] = {}
+    for row in cursor.fetchall():
+        channels_map.setdefault(row["lead_id"], []).append({
+            "channel": row["channel"],
+            "last_sent_at": row["last_sent_at"],
+            "touch_count": row["touch_count"],
+        })
+    return channels_map
+
+
 def get_contacted_leads_with_history(
     search: Optional[str] = None,
     channel: Optional[str] = None,
@@ -834,6 +892,7 @@ def get_contacted_leads_with_history(
     """
     Returns contacted leads enriched with their latest outreach interaction from outreach_log:
     - last_channel, contacted_at, message_sent, contact_notes, contact_outcome, next_followup_at
+    - contacted_channels: distinct outreach channels logged for each lead
     Supports omni-search (name, phone, city, notes, message, id) and channel filtering.
     """
     conn = get_connection(db_path)
@@ -904,7 +963,62 @@ def get_contacted_leads_with_history(
         """
         cursor.execute(query_leads, (*params, limit, offset))
         rows = [dict(r) for r in cursor.fetchall()]
+        channels_map = get_contacted_channels_map(cursor, [r["id"] for r in rows])
+        for r in rows:
+            chs = channels_map.get(r["id"], [])
+            if not chs and r.get("last_channel") and r["last_channel"] != "unknown":
+                chs = [{"channel": r["last_channel"].lower(), "last_sent_at": r.get("contacted_at"), "touch_count": 1}]
+            r["contacted_channels"] = chs
         return rows, total_count
+    finally:
+        conn.close()
+
+
+def get_reply_analytics(
+    reply_outcomes: Optional[List[str]] = None,
+    db_path: Optional[str] = None
+) -> Dict[str, Any]:
+    """Calculates distinct-lead reply counts by channel and outreach strategy from outreach_log history."""
+    reply_set = {o.strip().lower() for o in (reply_outcomes or ["replied"]) if o and o.strip()}
+    conn = get_connection(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT lead_id, LOWER(channel) AS channel, message_sent, LOWER(COALESCE(outcome, 'sent')) AS outcome
+            FROM outreach_log
+        """)
+        ch_sent: Dict[str, set] = {}
+        ch_replied: Dict[str, set] = {}
+        strat_sent: Dict[str, set] = {}
+        strat_replied: Dict[str, set] = {}
+        replied_leads: set = set()
+
+        for row in cursor.fetchall():
+            lid = row["lead_id"]
+            ch = row["channel"] or "unknown"
+            strat = extract_strategy_from_message(row["message_sent"])
+            is_reply = row["outcome"] in reply_set
+
+            ch_sent.setdefault(ch, set()).add(lid)
+            if strat:
+                strat_sent.setdefault(strat, set()).add(lid)
+            if is_reply:
+                replied_leads.add(lid)
+                ch_replied.setdefault(ch, set()).add(lid)
+                if strat:
+                    strat_replied.setdefault(strat, set()).add(lid)
+
+        return {
+            "total_replied_leads": len(replied_leads),
+            "by_channel": {
+                ch: {"sent_leads": len(ch_sent[ch]), "replied_leads": len(ch_replied.get(ch, set()))}
+                for ch in sorted(ch_sent)
+            },
+            "by_strategy": {
+                st: {"sent_leads": len(strat_sent[st]), "replied_leads": len(strat_replied.get(st, set()))}
+                for st in sorted(strat_sent)
+            },
+        }
     finally:
         conn.close()
 

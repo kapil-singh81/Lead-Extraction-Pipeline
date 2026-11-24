@@ -151,7 +151,7 @@ def test_p3_m07_niche_agnostic_wording():
 
     assert "Track every business contacted across WhatsApp, phone, email, and contact forms" in contacted_content
     assert "Business & Reputation" in contacted_content
-    assert "📝 Contact Form" in contacted_content
+    assert "Contact Form" in contacted_content
     assert "{{ c_lead.niche | default('Local Business') }}" in contacted_content
 
 
@@ -207,7 +207,7 @@ def test_endpoint_rendering_with_b23_templates(b23_client_and_db):
     assert "Horizon Plumbing HVAC" in resp_contacted.text
     assert "Track every business contacted" in resp_contacted.text
     assert "Business & Reputation" in resp_contacted.text
-    assert "📝 Contact Form" in resp_contacted.text
+    assert "Contact Form" in resp_contacted.text
 
     # 4. Partial card
     resp_card = client.get(f"/api/leads/{lead_id}/card")

@@ -428,7 +428,17 @@ async def post_lead_action(
             "gatekeeper": "Gatekeeper",
             "reciprocity": "Reciprocity"
         }
-        if pitch_type and pitch_type.strip():
+        reply_outcomes = {
+            o.strip().lower()
+            for o in cfg.get("outreach_channels", {}).get("reply_outcomes", ["replied"])
+            if o and o.strip()
+        }
+        is_reply = (outcome or "sent").strip().lower() in reply_outcomes
+        prior_strategy = database.get_channel_last_strategy(lead_id, outreach_ch, db_path=db_path) if is_reply else None
+
+        if prior_strategy:
+            strategy_key = prior_strategy
+        elif pitch_type and pitch_type.strip():
             strategy_key = pitch_type.strip()
         else:
             current_l = database.get_lead_by_id(lead_id, db_path=db_path)
@@ -1017,6 +1027,7 @@ async def get_contacted_leads_view(
             "view_mode": view or "table",
             "page": page,
             "contacted_stats": contacted_stats,
+            "channel_platforms": cfg.get("outreach_channels", {}).get("platforms", {}),
             "stats": stats,
             "done_today": queue_data.get("done_today", 0),
             "daily_queue_size": daily_size,
@@ -1024,6 +1035,15 @@ async def get_contacted_leads_view(
             "active_nav": "contacted"
         }
     )
+
+
+@app.get("/api/analytics/replies")
+async def get_reply_analytics_endpoint():
+    """Returns reply counts grouped by channel and outreach strategy from outreach_log history."""
+    cfg = load_config()
+    db_path = get_db_path(cfg)
+    reply_outcomes = cfg.get("outreach_channels", {}).get("reply_outcomes", ["replied"])
+    return database.get_reply_analytics(reply_outcomes=reply_outcomes, db_path=db_path)
 
 
 @app.get("/leads", response_class=HTMLResponse)

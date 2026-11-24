@@ -198,3 +198,83 @@ def test_b24_partial_files_exist_and_clean():
     cockpit_content = pitch_cockpit.read_text(encoding="utf-8")
     for script_match in re.finditer(r"<script(.*?)>", cockpit_content, re.IGNORECASE):
         assert 'type="application/json"' in script_match.group(1), f"Executable script tag in {pitch_cockpit.name}"
+
+
+def test_b24_drawer_no_duplication_and_action_section_order(b24_client_and_db):
+    """
+    Verify lead_drawer.html renders edit form, contacts, and pitch cockpit exactly once
+    (no duplicated inline markup alongside shared partials), has no duplicate select options,
+    and places the quick action bar ('Update Lead Status') before 'Outreach Channel & Status Management'.
+    """
+    client, db_path = b24_client_and_db
+
+    audit_payload = {
+        "audit_completed": True,
+        "flaw_codes": ["slow_load"],
+        "flaw_labels": ["Slow Load Speed (7.1s)"],
+        "metrics": {"load_time_ms": 7110}
+    }
+    lead_id = database.insert_lead({
+        "place_id": "ChIJ_b24_dedup_01",
+        "business_name": "Roof4U Roofing & Construction",
+        "clean_phone": "+19704047227",
+        "phone": "(970) 404-7227",
+        "line_type": "Local (US)",
+        "city": "Plano",
+        "niche": "Roofing",
+        "website_url": "https://roof4uconstruction.com",
+        "rating": 5.0,
+        "review_count": 204,
+        "priority_score": 8.58,
+        "generic_email": "office@roof4uconstruction.com",
+        "status": "contacted",
+        "audit_json": json.dumps(audit_payload)
+    }, db_path=db_path)
+
+    resp_modal = client.get(f"/api/leads/{lead_id}/modal")
+    assert resp_modal.status_code == 200
+    modal_html = resp_modal.text
+
+    # No duplicate shared sections or IDs
+    assert modal_html.count('class="contacts-section"') == 1
+    assert modal_html.count("<span>📞</span> Actionable Contact Info") == 1
+    assert modal_html.count('class="pitch-cockpit-section"') == 1
+    assert modal_html.count("<span>🎯</span> Outreach Script Generator (Touch #1)") == 1
+    assert modal_html.count('class="lead-inline-edit-box"') == 1
+    assert modal_html.count("Edit Business Record:") == 1
+    assert modal_html.count(f'id="drawer-edit-panel-{lead_id}"') == 1
+    assert modal_html.count(f'id="add-drawer-channel-box-{lead_id}"') == 1
+    assert modal_html.count(f'id="pitch-cockpit-drawer-{lead_id}"') == 1
+    assert modal_html.count(f'id="pitch-textarea-drawer-{lead_id}"') == 1
+
+    # No duplicate options inside status / outcome selects in drawer
+    status_select_match = re.search(
+        rf'<select id="sel-status-drawer-{lead_id}".*?</select>',
+        modal_html,
+        re.DOTALL,
+    )
+    assert status_select_match is not None
+    status_values = re.findall(r'<option value="([^"]+)"', status_select_match.group(0))
+    assert len(status_values) == len(set(status_values))
+
+    outcome_select_match = re.search(
+        rf'<select id="sel-outcome-drawer-{lead_id}".*?</select>',
+        modal_html,
+        re.DOTALL,
+    )
+    assert outcome_select_match is not None
+    outcome_values = re.findall(r'<option value="([^"]+)"', outcome_select_match.group(0))
+    assert len(outcome_values) == len(set(outcome_values))
+
+    # 'Update Lead Status' quick buttons appear before 'Outreach Channel & Status Management' in drawer
+    quick_pos = modal_html.index("Update Lead Status")
+    mgr_pos = modal_html.index("Outreach Channel &amp; Status Management") if "Outreach Channel &amp; Status Management" in modal_html else modal_html.index("Outreach Channel & Status Management")
+    assert quick_pos < mgr_pos
+
+    # Same section order on contacted page individual lead card
+    resp_contacted = client.get("/contacted?view=grid")
+    assert resp_contacted.status_code == 200
+    contacted_html = resp_contacted.text
+    card_quick_pos = contacted_html.index("Quick 1-Click Actions")
+    card_mgr_pos = contacted_html.index("Outreach Channel & Status Management")
+    assert card_quick_pos < card_mgr_pos

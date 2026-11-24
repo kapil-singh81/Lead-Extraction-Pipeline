@@ -274,19 +274,19 @@ def test_whatsapp_channel_toggle():
     # 1. Reset lead 51 to have no on-site whatsapp_url
     database.update_lead_fields(51, {"whatsapp_url": None}, db_path=db_path)
     
-    # 2. Fetch card: Digital Web Channels should have '+ WhatsApp' button, and 1-click action should have 'Open WhatsApp ↗' and 'WhatsApp Message Sent'
+    # 2. Fetch card: Digital Web Channels should have '+ WhatsApp' button, and 1-click action should have 'Open WhatsApp ↗' and 'WB Sent'
     resp = client.get("/api/leads/51/card")
     assert resp.status_code == 200
     assert "+ WhatsApp" in resp.text
     assert "Open WhatsApp ↗" in resp.text
-    assert "WhatsApp Message Sent" in resp.text
+    assert "WB Sent" in resp.text
 
     # 3. Toggle ON via API
     resp_on = client.post("/api/leads/51/toggle-whatsapp")
     assert resp_on.status_code == 200
     assert "Remove WhatsApp as an active channel" in resp_on.text
     assert "Open WhatsApp ↗" in resp_on.text
-    assert "WhatsApp Message Sent" in resp_on.text
+    assert "WB Sent" in resp_on.text
     assert "wa.me" in resp_on.text
 
     # Verify database updated
@@ -356,4 +356,110 @@ def test_facebook_action_and_channel_filter():
                 (orig_lead["status"], orig_lead["status_reason"], test_lead_id)
             )
         conn.close()
+
+
+def test_contacted_table_multi_channel_icons_and_reply_analytics(tmp_path, monkeypatch):
+    """
+    Verifies:
+    1. Contacted table shows icon-only badges for all contacted platforms + single latest timestamp + distinct Direct Contact Info.
+    2. Changing outcome from sent to replied on one channel credits +1 only to that channel and its strategy in reply analytics.
+    """
+    import json
+    import re
+    import dashboard
+
+    test_db = str(tmp_path / "test_multi_ch_replies.db")
+    database.init_db(test_db)
+
+    real_cfg = dashboard.load_config()
+    cfg_copy = json.loads(json.dumps(real_cfg))
+    cfg_copy["app"]["db_path"] = test_db
+    monkeypatch.setattr(dashboard, "load_config", lambda *args, **kwargs: cfg_copy)
+
+    lead_id = database.insert_lead({
+        "place_id": "ChIJ_multi_reply_01",
+        "business_name": "Multi Channel Roofing Co",
+        "clean_phone": "+12145553344",
+        "dm_email": "owner@multichannelroofing.com",
+        "facebook_url": "https://facebook.com/multichannelroofing",
+        "form_url": "https://multichannelroofing.com/contact",
+        "status": "outreach_ready",
+        "priority_score": 85.0,
+    }, db_path=test_db)
+
+    # Log 3 distinct platforms with 3 distinct strategies
+    id_form = database.log_outreach(lead_id, "form", outcome="sent", message_sent="[local_contrast] Form pitch", db_path=test_db)
+    id_email = database.log_outreach(lead_id, "email", outcome="sent", message_sent="[naive_curiosity] Email pitch", db_path=test_db)
+    id_fb = database.log_outreach(lead_id, "facebook", outcome="sent", message_sent="[accusation_audit] FB pitch", db_path=test_db)
+
+    # Ensure deterministic ordering (facebook newest)
+    conn = database.get_connection(test_db)
+    with conn:
+        conn.execute("UPDATE outreach_log SET sent_at = '2026-11-24 10:00:00' WHERE id = ?", (id_form,))
+        conn.execute("UPDATE outreach_log SET sent_at = '2026-11-24 11:00:00' WHERE id = ?", (id_email,))
+        conn.execute("UPDATE outreach_log SET sent_at = '2026-11-24 12:00:00' WHERE id = ?", (id_fb,))
+    conn.close()
+
+    client = TestClient(app)
+
+    # 1. Table view shows all 3 icon-only badges, single latest timestamp, and Direct Contact Info
+    resp_tbl = client.get("/contacted?view=table")
+    assert resp_tbl.status_code == 200
+    row_match = re.search(rf'<tr[^>]*id="row-contacted-{lead_id}".*?</tr>', resp_tbl.text, re.DOTALL)
+    assert row_match is not None
+    row_html = row_match.group(0)
+
+    assert "tbl-ch-icon ch-form" in row_html
+    assert "tbl-ch-icon ch-email" in row_html
+    assert "tbl-ch-icon ch-facebook" in row_html
+    assert row_html.count("⏱️") == 1
+    assert "⏱️ 2026-11-24 12:00:00" in row_html
+    assert "owner@multichannelroofing.com" in row_html
+    assert "+12145553344" in row_html
+
+    # 2. Mark replied specifically on 'email' (passing a different default pitch_type from drawer)
+    resp_reply = client.post(
+        f"/api/leads/{lead_id}/action",
+        data={
+            "action": "contacted",
+            "channel": "email",
+            "outcome": "replied",
+            "pitch_type": "local_contrast",
+            "notes": "Prospect replied via email",
+            "source": "drawer",
+            "stay": "drawer",
+        },
+    )
+    assert resp_reply.status_code == 200
+
+    # 3. Verify analytics credits ONLY email (+1) and ONLY naive_curiosity (+1)
+    resp_analytics = client.get("/api/analytics/replies")
+    assert resp_analytics.status_code == 200
+    analytics = resp_analytics.json()
+
+    assert analytics["total_replied_leads"] == 1
+    assert analytics["by_channel"]["email"]["replied_leads"] == 1
+    assert analytics["by_channel"]["form"]["replied_leads"] == 0
+    assert analytics["by_channel"]["facebook"]["replied_leads"] == 0
+
+    assert analytics["by_strategy"]["naive_curiosity"]["replied_leads"] == 1
+    assert analytics["by_strategy"]["local_contrast"]["replied_leads"] == 0
+    assert analytics["by_strategy"]["accusation_audit"]["replied_leads"] == 0
+
+    # 4. Saving notes again on email with outcome=replied must not double-count
+    client.post(
+        f"/api/leads/{lead_id}/action",
+        data={
+            "action": "contacted",
+            "channel": "email",
+            "outcome": "replied",
+            "notes": "Follow-up note",
+            "source": "drawer",
+            "stay": "drawer",
+        },
+    )
+    analytics_after = client.get("/api/analytics/replies").json()
+    assert analytics_after["total_replied_leads"] == 1
+    assert analytics_after["by_channel"]["email"]["replied_leads"] == 1
+    assert analytics_after["by_strategy"]["naive_curiosity"]["replied_leads"] == 1
 

@@ -1,0 +1,25 @@
+{% include "partials/lead_card.html" %}
+
+<!-- Out of band sidebar & progress updates (Returned ONLY on action submissions) -->
+<div id="sidebar-counts" hx-swap-oob="true" class="stats-list">
+  {% include "partials/sidebar_counts.html" %}
+</div>
+
+{% if queue_leads is defined %}
+<div id="queue-tiles-container" hx-swap-oob="true" class="queue-tiles-scroll-box">
+  {% include "partials/queue_tiles.html" %}
+</div>
+{% endif %}
+
+<div id="progress-tracker" hx-swap-oob="true">
+  <div class="progress-widget">
+    <div class="progress-text">
+      <div class="progress-title">{{ done_today | default(0) }} / {{ daily_queue_size | default(35) }} Reviewed Today</div>
+      <div class="progress-sub">{{ remaining_quota | default(0) }} Remaining</div>
+    </div>
+    <div class="progress-bar-bg">
+      {% set pct = [((done_today | default(0)) / (daily_queue_size | default(35)) * 100) | round | int, 100] | min %}
+      <div class="progress-bar-fill" style="width: {{ pct }}%;"></div>
+    </div>
+  </div>
+</div>

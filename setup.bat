@@ -41,7 +41,7 @@ call venv\Scripts\activate.bat
 echo [*] Upgrading pip...
 python -m pip install --upgrade pip --quiet
 
-echo [*] Installing requirements (playwright, gspread, etc.)...
+echo [*] Installing requirements (playwright, fastapi, etc.)...
 pip install -r requirements.txt --quiet
 if %errorlevel% neq 0 (
     echo [ERROR] Failed to install packages from requirements.txt.
@@ -60,24 +60,7 @@ if %errorlevel% neq 0 (
 )
 echo [+] Playwright Chromium ready.
 
-:: 5. CHECK GOOGLE CLOUD CREDENTIALS
-echo [*] Checking Google Cloud credentials (credentials.json)...
-if not exist "credentials.json" (
-    echo.
-    echo [!] WARNING: 'credentials.json' was NOT found in this folder.
-    echo     Google Sheets synchronization requires a free Google Cloud Service Account key.
-    echo.
-    echo     How to fix:
-    echo     1. Go to Google Cloud Console -^> IAM -^> Service Accounts.
-    echo     2. Create a service account and generate a JSON key.
-    echo     3. Rename the downloaded key file to 'credentials.json' and place it here.
-    echo     4. Share your Google Sheet with the service account email as "Editor".
-    echo.
-) else (
-    echo [+] Google Cloud credentials file found: credentials.json
-)
-
-:: 6. DATABASE CHECK
+:: 5. DATABASE CHECK
 if not exist "lead_pipeline.db" (
     echo [*] Initializing local database (lead_pipeline.db)...
     python -c "import database, json; cfg=json.load(open('config.json')); database.init_db(cfg['app']['db_path'])"
@@ -93,7 +76,7 @@ echo ===========================================================================
 echo.
 echo Select an option:
 echo   [1] View plain-English explanation of all config.json settings
-echo   [2] Test Google Sheets and Database connectivity
+echo   [2] Test Database connectivity
 echo   [3] Exit Setup
 echo.
 set /p MENU_CHOICE="Enter your choice (1, 2, or 3): "
@@ -145,16 +128,9 @@ echo        * "max_dom_nodes" (Default: 1800): Bloated HTML (>1800 tags) fails.
 echo    - "mobile_viewport": Tests if website overflows on iPhone screen (390x844).
 echo    - "decision_maker_keywords": Keywords to identify Owner, CEO, Founder.
 echo.
-echo 4. [sheets] (Google Sheets Sync & Routing Engine)
-echo    - "spreadsheet_id":
-echo        The unique ID in your Google Sheet URL (docs.google.com/spreadsheets/d/.../edit).
-echo    - "credentials_file": "credentials.json" (Google Service Account key).
-echo    - "tabs":
-echo        * "today": Temporary intake buffer for newly audited leads.
-echo        * "outreach_ready": High-value leads (flawed site + verified DM contact).
-echo        * "missing_info": Flawed sites or no-site leads missing DM contact.
-echo        * "disqualified": Healthy/fast sites or dead domains.
-echo        * "archive": Master ledger storing all leads deduplicated by Lead UUID.
+echo 4. [queue] (Daily Verification Queue & Ranking)
+echo    - "daily_queue_size" (Default: 35): Max verified leads queued for review today.
+echo    - "ranking_weights": Prioritizes leads with critical website flaws.
 echo.
 echo ==============================================================================
 pause
@@ -162,26 +138,15 @@ goto end_setup
 
 :test_connections
 echo.
-echo [*] Testing database and Google Sheets connectivity...
-python -c "
-import json, sqlite3, gspread
-cfg = json.load(open('config.json'))
-conn = sqlite3.connect(cfg['app']['db_path'])
-cur = conn.cursor()
-cur.execute('SELECT COUNT(*) FROM leads')
-print(f'[DB] SQLite connection successful. Current leads in DB: {cur.fetchone()[0]}')
-try:
-    gc = gspread.service_account(filename=cfg['sheets']['credentials_file'])
-    sp = gc.open_by_key(cfg['sheets']['spreadsheet_id'])
-    print(f'[SHEETS] Google Sheets connected successfully: \"{sp.title}\"')
-except Exception as e:
-    print(f'[SHEETS ERROR] Could not connect to Google Sheets: {e}')
-"
+echo [*] Testing database connectivity...
+python -c "import json, sqlite3; cfg=json.load(open('config.json')); conn=sqlite3.connect(cfg['app']['db_path']); cur=conn.cursor(); cur.execute('SELECT COUNT(*) FROM leads'); print(f'[DB] SQLite connection successful. Current leads in DB: {cur.fetchone()[0]}'); conn.close()"
 echo.
 pause
 
 :end_setup
 echo.
-echo Setup is complete! You can now run 'start.bat' anytime to extract leads.
+echo Setup is complete!
+echo   - Run 'start.bat' to harvest and audit new leads.
+echo   - Run 'dashboard.bat' to open the Daily Verification Cockpit (http://localhost:8000).
 pause
 

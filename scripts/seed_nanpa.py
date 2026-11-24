@@ -3,24 +3,32 @@ seed_nanpa.py - Downloads and seeds the official, free FCC/NANPA public NPA-NXX
 telecom table into SQLite for 100% offline, zero-cost US line-type classification.
 """
 
+import os
+import sys
 import io
 import re
 import csv
 import zipfile
 import logging
 import urllib.request
-import database
+
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+from core import database
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 NANPA_URL = "https://www.nationalnanpa.com/nanp1/allutlzd.zip"
 
 
-def seed_prefixes(db_path: str = "lead_pipeline.db"):
+def seed_prefixes(db_path: str = "data/lead_pipeline.db"):
     logging.info(f"Connecting to database '{db_path}'...")
     database.init_db(db_path)
 
-    with database.get_connection(db_path) as conn:
+    conn = database.get_connection(db_path)
+    try:
         cursor = conn.cursor()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS phone_prefixes (
@@ -38,6 +46,8 @@ def seed_prefixes(db_path: str = "lead_pipeline.db"):
         if existing_count > 50000:
             logging.info(f"phone_prefixes table already seeded ({existing_count:,} records). Skipping download.")
             return
+    finally:
+        conn.close()
 
     logging.info(f"Downloading official NANPA prefix data from {NANPA_URL}...")
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -80,13 +90,16 @@ def seed_prefixes(db_path: str = "lead_pipeline.db"):
         return
 
     logging.info(f"Inserting {len(records):,} prefix mappings into SQLite...")
-    with database.get_connection(db_path) as conn:
-        cursor = conn.cursor()
-        cursor.executemany(
-            "INSERT OR REPLACE INTO phone_prefixes (npa, nxx, line_type) VALUES (?, ?, ?);",
-            records
-        )
-        conn.commit()
+    conn = database.get_connection(db_path)
+    try:
+        with conn:
+            cursor = conn.cursor()
+            cursor.executemany(
+                "INSERT OR REPLACE INTO phone_prefixes (npa, nxx, line_type) VALUES (?, ?, ?);",
+                records
+            )
+    finally:
+        conn.close()
 
     logging.info("NANPA prefix seeding complete. Offline phone line-type classification is active.")
 

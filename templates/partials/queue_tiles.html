@@ -1,0 +1,73 @@
+{% if queue_leads %}
+<div class="queue-tiles-list" id="queue-tiles-list">
+  {% for q_lead in queue_leads %}
+    <div class="queue-tile {% if selected_lead and selected_lead.id == q_lead.id %}active{% endif %}"
+         id="tile-{{ q_lead.id }}"
+         data-lead-id="{{ q_lead.id }}"
+         data-index="{{ loop.index0 }}"
+         data-name="{{ q_lead.business_name | lower }}"
+         data-city="{{ q_lead.city | default('') | lower }}"
+         data-phone="{{ (q_lead.clean_phone | default(q_lead.phone) | default('')) | lower }}"
+         data-domain="{{ (q_lead.clean_domain | default(q_lead.website_url) | default('')) | lower }}"
+         data-niche="{{ q_lead.niche | default('') | lower }}"
+         data-rating="{{ q_lead.rating | default(0) }}"
+         data-reviews="{{ q_lead.review_count | default(0) }}"
+         data-whatsapp="{% if q_lead.whatsapp_url %}true{% else %}false{% endif %}"
+         data-flaws="{% if q_lead.audit and q_lead.audit.flaw_codes %}{{ q_lead.audit.flaw_codes | join(' ') | lower }}{% endif %} {% if q_lead.audit and q_lead.audit.flaw_labels %}{{ q_lead.audit.flaw_labels | join(' ') | lower }}{% endif %} {{ q_lead.status_reason | default('') | lower }}"
+         data-search="{{ q_lead.id }} {{ q_lead.business_name | lower }} {{ q_lead.city | default('') | lower }} {{ (q_lead.clean_phone | default(q_lead.phone) | default('')) | lower }} {{ (q_lead.clean_domain | default(q_lead.website_url) | default('')) | lower }} {{ q_lead.niche | default('') | lower }} {% if q_lead.audit and q_lead.audit.flaw_labels %}{{ q_lead.audit.flaw_labels | join(' ') | lower }}{% endif %} {{ q_lead.status_reason | default('') | lower }}"
+         hx-get="/api/leads/{{ q_lead.id }}/card"
+         hx-target="#queue-card-container"
+         hx-swap="innerHTML"
+         onclick="setActiveTile(this, {{ loop.index0 }})">
+      
+      <div class="tile-top-row">
+        <div class="tile-title-box">
+          <span class="tile-index-badge">#{{ loop.index }}</span>
+          <strong class="tile-name">{{ q_lead.business_name }}</strong>
+        </div>
+        <span class="tile-score-pill">{{ q_lead.priority_score | default(0.0) }}</span>
+      </div>
+
+      <div class="tile-meta-row">
+        {% if q_lead.rating and q_lead.rating > 0 %}
+          <span class="tile-rating">★ {{ "%.1f"|format(q_lead.rating) }} ({{ q_lead.review_count | default(0) }})</span>
+          <span class="tile-dot">•</span>
+        {% endif %}
+        <span class="tile-city">📍 {{ q_lead.city | default('US') }}</span>
+      </div>
+
+      <!-- Quick channels & primary flaw preview -->
+      <div class="tile-badges-row">
+        {% if q_lead.clean_phone %}
+          <span class="mini-chip phone">📞 {{ q_lead.line_type | default('Phone') }}</span>
+        {% endif %}
+        {% if q_lead.whatsapp_url %}
+          <span class="mini-chip web" style="background: #dcfce7; color: #15803d; font-weight: 600;">💬 WA</span>
+        {% endif %}
+        {% if q_lead.dm_email or q_lead.generic_email %}
+          <span class="mini-chip email">✉️ Email</span>
+        {% endif %}
+        {% if q_lead.form_url %}
+          <span class="mini-chip web">📝 Form</span>
+        {% endif %}
+        {% if q_lead.facebook_url %}
+          <span class="mini-chip web" style="background: #eff6ff; color: #1e40af;">📘 FB</span>
+        {% endif %}
+        {% if q_lead.instagram_url %}
+          <span class="mini-chip web" style="background: #fdf2f8; color: #be185d;">📸 IG</span>
+        {% endif %}
+        {% if q_lead.audit and q_lead.audit.flaw_labels and q_lead.audit.flaw_labels | length > 0 %}
+          <span class="mini-chip flaw">🚩 {{ q_lead.audit.flaw_labels[0][:20] }}{% if q_lead.audit.flaw_labels[0]|length > 20 %}...{% endif %}</span>
+        {% elif q_lead.status_reason %}
+          <span class="mini-chip reason">ℹ️ {{ q_lead.status_reason[:20] }}</span>
+        {% endif %}
+      </div>
+    </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="queue-empty-tiles">
+  <span>✓</span>
+  <p>No pending queue items.</p>
+</div>
+{% endif %}

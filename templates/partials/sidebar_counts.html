@@ -1,0 +1,24 @@
+<div class="stat-row">
+  <span class="stat-label"><span class="stat-dot ready"></span> Outreach Ready</span>
+  <span class="stat-value">{{ stats.outreach_ready | default(0) }}</span>
+</div>
+<div class="stat-row">
+  <span class="stat-label"><span class="stat-dot missing"></span> Missing Info</span>
+  <span class="stat-value">{{ stats.missing_info | default(0) }}</span>
+</div>
+<div class="stat-row">
+  <span class="stat-label"><span class="stat-dot contacted"></span> Contacted</span>
+  <span class="stat-value">{{ stats.contacted | default(0) }}</span>
+</div>
+<div class="stat-row">
+  <span class="stat-label"><span class="stat-dot disqualified"></span> Disqualified</span>
+  <span class="stat-value">{{ stats.disqualified | default(0) }}</span>
+</div>
+<div class="stat-row">
+  <span class="stat-label"><span class="stat-dot new"></span> Pending Audits</span>
+  <span class="stat-value">{{ stats.new | default(0) }}</span>
+</div>
+<div class="stat-row" style="background: transparent; border-top: 1px dashed var(--border-color); margin-top: 4px; padding-top: 8px;">
+  <span class="stat-label" style="font-weight: 600;">Total In Archive</span>
+  <span class="stat-value">{{ stats.total | default(0) }}</span>
+</div>

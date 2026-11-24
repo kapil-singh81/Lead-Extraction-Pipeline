@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+
+{% block title %}Daily Outreach Verification Cockpit{% endblock %}
+{% block header_title %}Daily Verification Queue{% endblock %}
+{% block header_subtitle %}Interactive verification cockpit — browse and inspect any lead in today's outreach queue{% endblock %}
+
+{% block content %}
+<div class="queue-page-wrapper">
+  <!-- View Mode Switcher & Stats Bar -->
+  <div class="queue-toolbar">
+    <div class="queue-toolbar-left">
+      <span class="queue-count-badge">
+        <strong>{{ queue_leads | length }}</strong> Outreach Ready Leads in Queue
+      </span>
+      {% if search %}
+        <span class="filter-pill">Filtering by: "{{ search }}" <a href="/?view={{ view_mode }}" style="margin-left: 6px; color: inherit; text-decoration: none;">✕</a></span>
+      {% endif %}
+    </div>
+
+    <div class="view-toggle-bar">
+      <a href="/?view=split{% if search %}&search={{ search }}{% endif %}"
+         class="view-toggle-btn {% if view_mode != 'grid' %}active{% endif %}">
+        <span>🗂️</span> Split Workspace
+      </a>
+      <a href="/?view=grid{% if search %}&search={{ search }}{% endif %}"
+         class="view-toggle-btn {% if view_mode == 'grid' %}active{% endif %}">
+        <span>▦</span> All Cards Grid
+      </a>
+    </div>
+  </div>
+
+  {% if view_mode == 'grid' %}
+    <!-- All Cards Grid View: Projects EVERY Lead Card side-by-side -->
+    <div class="all-cards-grid">
+      {% if queue_leads %}
+        {% for card_lead in queue_leads %}
+          <div class="card-grid-item" id="grid-item-{{ card_lead.id }}">
+            <div class="grid-card-banner">
+              <span class="grid-lead-num">#{{ loop.index }} of {{ queue_leads | length }}</span>
+              <span class="status-badge {{ card_lead.status }}">{{ card_lead.status | replace('_', ' ') }}</span>
+            </div>
+            {% set lead = card_lead %}
+            {% include "partials/lead_card.html" %}
+          </div>
+        {% endfor %}
+      {% else %}
+        <div class="empty-queue-card" style="grid-column: 1 / -1;">
+          <div class="empty-icon">🎉</div>
+          <h2>No Leads Pending Verification</h2>
+          <p>All queue leads have been triaged or reviewed for today's quota.</p>
+        </div>
+      {% endif %}
+    </div>
+
+  {% else %}
+    <!-- Split Workspace: Interactive Navigator on Left + Complete Focused Card on Right -->
+    <div class="queue-split-layout">
+      <!-- Left: Queue Navigator -->
+      <aside class="queue-nav-panel">
+        <div class="queue-nav-header">
+          <div class="queue-nav-title">
+            <span>📋</span> Queue Navigator
+            <span class="badge-mini">{{ queue_leads | length }}</span>
+          </div>
+
+          <!-- Omni-Search Filter -->
+          <div class="queue-search-wrap">
+            <input type="text"
+                   id="queue-search-input"
+                   class="search-input"
+                   placeholder="Search phone, site, city, flaw..."
+                   oninput="filterQueueList(this.value)">
+          </div>
+
+          <!-- Quick Filter Pills -->
+          <div class="queue-filter-pills-row">
+            <button type="button" class="q-filter-pill active" data-filter="all" onclick="setQueueFilter('all', this)">All</button>
+            <button type="button" class="q-filter-pill" data-filter="whatsapp" onclick="setQueueFilter('whatsapp', this)">💬 WA</button>
+            <button type="button" class="q-filter-pill" data-filter="mobile" onclick="setQueueFilter('mobile', this)">📱 Mobile</button>
+            <button type="button" class="q-filter-pill" data-filter="phone" onclick="setQueueFilter('phone', this)">📞 Call</button>
+            <button type="button" class="q-filter-pill" data-filter="speed" onclick="setQueueFilter('speed', this)">⚡ Speed</button>
+            <button type="button" class="q-filter-pill" data-filter="high_rating" onclick="setQueueFilter('high_rating', this)">⭐ 4.8+</button>
+          </div>
+
+          <!-- Stepper Navigation -->
+          <div class="queue-stepper-bar">
+            <button class="btn-step" onclick="stepQueue(-1)" title="Previous Lead (Left Arrow)">← Prev</button>
+            <span id="stepper-counter" class="stepper-counter">
+              {% if queue_leads %}Lead 1 of {{ queue_leads | length }}{% else %}0 Leads{% endif %}
+            </span>
+            <button class="btn-step" onclick="stepQueue(1)" title="Next Lead (Right Arrow)">Next →</button>
+          </div>
+        </div>
+
+        <!-- Scrollable List of Interactive Lead Tiles -->
+        <div id="queue-tiles-container" class="queue-tiles-scroll-box">
+          {% include "partials/queue_tiles.html" %}
+        </div>
+      </aside>
+
+      <!-- Right: Main Lead Card Viewer Stage -->
+      <section class="queue-focus-panel">
+        <div id="queue-card-container">
+          {% set lead = selected_lead %}
+          {% include "partials/lead_card.html" %}
+        </div>
+      </section>
+    </div>
+  {% endif %}
+</div>
+
+<!-- Interactive UI Client Script -->
+<script>
+  let currentLeadIndex = 0;
+  let currentFilter = 'all';
+
+  function setActiveTile(tileElement, index) {
+    document.querySelectorAll('.queue-tile').forEach(el => el.classList.remove('active'));
+    tileElement.classList.add('active');
+    currentLeadIndex = index;
+    updateCounterDisplay();
+  }
+
+  function updateCounterDisplay() {
+    const counter = document.getElementById('stepper-counter');
+    const allTiles = Array.from(document.querySelectorAll('.queue-tile')).filter(t => t.style.display !== 'none');
+    if (counter && allTiles.length > 0) {
+      counter.innerText = `Lead ${currentLeadIndex + 1} of ${allTiles.length}`;
+    }
+  }
+
+  function stepQueue(direction) {
+    const allTiles = Array.from(document.querySelectorAll('.queue-tile')).filter(t => t.style.display !== 'none');
+    if (allTiles.length === 0) return;
+
+    currentLeadIndex += direction;
+    if (currentLeadIndex < 0) currentLeadIndex = allTiles.length - 1;
+    if (currentLeadIndex >= allTiles.length) currentLeadIndex = 0;
+
+    const targetTile = allTiles[currentLeadIndex];
+    if (targetTile) {
+      targetTile.click();
+      targetTile.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }
+
+  function setQueueFilter(filterType, btnElement) {
+    document.querySelectorAll('.q-filter-pill').forEach(b => b.classList.remove('active'));
+    btnElement.classList.add('active');
+    currentFilter = filterType;
+    const searchInput = document.getElementById('queue-search-input');
+    filterQueueList(searchInput ? searchInput.value : '');
+  }
+
+  function filterQueueList(query) {
+    const q = (query || '').toLowerCase().trim();
+    const tiles = document.querySelectorAll('.queue-tile');
+    let visibleCount = 0;
+    let firstVisible = null;
+
+    tiles.forEach(tile => {
+      const searchData = (tile.getAttribute('data-search') || '').toLowerCase();
+      const hasWA = tile.getAttribute('data-whatsapp') === 'true';
+      const flaws = (tile.getAttribute('data-flaws') || '').toLowerCase();
+      const rating = parseFloat(tile.getAttribute('data-rating') || '0');
+
+      // 1. Check quick filter pill condition
+      let passesFilter = true;
+      if (currentFilter === 'whatsapp') {
+        passesFilter = hasWA;
+      } else if (currentFilter === 'mobile') {
+        passesFilter = flaws.includes('broken_mobile') || flaws.includes('mobile') || flaws.includes('overflow') || flaws.includes('iphone');
+      } else if (currentFilter === 'phone') {
+        passesFilter = flaws.includes('unclickable_phone') || flaws.includes('tap') || flaws.includes('phone') || flaws.includes('call');
+      } else if (currentFilter === 'speed') {
+        passesFilter = flaws.includes('slow') || flaws.includes('ttfb') || flaws.includes('load') || flaws.includes('seconds');
+      } else if (currentFilter === 'high_rating') {
+        passesFilter = rating >= 4.8;
+      }
+
+      // 2. Check omni-search text match
+      const passesQuery = !q || searchData.includes(q) || tile.innerText.toLowerCase().includes(q);
+
+      if (passesFilter && passesQuery) {
+        tile.style.display = 'flex';
+        visibleCount++;
+        if (!firstVisible) firstVisible = tile;
+      } else {
+        tile.style.display = 'none';
+      }
+    });
+
+    const counter = document.getElementById('stepper-counter');
+    if (counter) {
+      counter.innerText = `${visibleCount} visible`;
+    }
+  }
+
+  // Keyboard navigation: ArrowLeft / ArrowRight / 'j' / 'k'
+  document.addEventListener('keydown', function(e) {
+    if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+    if (e.key === 'ArrowLeft' || e.key === 'k') {
+      stepQueue(-1);
+    } else if (e.key === 'ArrowRight' || e.key === 'j') {
+      stepQueue(1);
+    }
+  });
+</script>
+{% endblock %}

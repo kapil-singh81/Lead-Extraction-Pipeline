@@ -5,9 +5,7 @@ import logging
 import sys
 import time
 
-import c1_scraper
-import auditor
-import sheets
+from core import database, c1_scraper, auditor
 
 if sys.platform == "win32":
     try:
@@ -25,7 +23,7 @@ logging.basicConfig(
 
 def parse_arguments() -> argparse.Namespace:
     """Parses command-line arguments for configuration overriding."""
-    parser = argparse.ArgumentParser(description="Lead Extraction & Site Auditing Engine")
+    parser = argparse.ArgumentParser(description="Lead Extraction & Site Auditing Engine (Micro-CRM / WAL)")
     parser.add_argument(
         "--config",
         type=str,
@@ -52,12 +50,12 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--skip-audit",
         action="store_true",
-        help="Skip Stage 2 & 3 site auditing and qualification"
+        help="Skip Stage 2 site auditing and qualification"
     )
     parser.add_argument(
-        "--skip-sync",
+        "--re-audit",
         action="store_true",
-        help="Skip Stage 4 Google Sheets export"
+        help="Re-audit all existing leads in the database that have websites instead of only new leads"
     )
     return parser.parse_args()
 
@@ -68,7 +66,7 @@ async def run_pipeline(
     country: str = None,
     args: argparse.Namespace = None
 ) -> None:
-    """Executes the pipeline stages sequentially with optional runtime query/country overrides."""
+    """Executes extraction and auditing stages sequentially, updating SQLite WAL."""
     start_time = time.time()
     logging.info(f"=== Starting Lead Extraction Pipeline [Config: {config_path}] ===")
 
@@ -76,11 +74,13 @@ async def run_pipeline(
         class DummyArgs:
             skip_scrape = False
             skip_audit = False
-            skip_sync = False
         args = DummyArgs()
 
     with open(config_path, "r", encoding="utf-8") as f:
         config = json.load(f)
+
+    db_path = config["app"]["db_path"]
+    database.init_db(db_path)
 
     if query:
         query_clean = query.strip()
@@ -102,46 +102,64 @@ async def run_pipeline(
             config["scraper_c1"]["default_phone_prefix"] = country_prefix_map[country_clean]
             logging.info(f"[RUNTIME OVERRIDE] Phone prefix set to: '{country_prefix_map[country_clean]}'")
 
-    # 1. Maps Extraction Engine
+    # Initialize batch run tracking
+    active_query = query or (config.get("scraper_c1", {}).get("target_queries") or ["unknown"])[0]
+    run_id = database.create_run(
+        run_type="local_scrape",
+        query=active_query,
+        metadata={"country": config["app"]["target_country"], "db_path": db_path},
+        db_path=db_path
+    )
+    logging.info(f"Initialized Tracking Run #{run_id} in SQLite archive.")
+
+    harvested_count = 0
+    # 1. Stage 1: Google Maps Extraction Engine
     if not args.skip_scrape:
         logging.info("--- Stage 1: Running Maps Harvester ---")
         try:
-            harvested_count = await c1_scraper.run_maps_scraper(config)
+            harvested_count = await c1_scraper.run_maps_scraper(config, run_id=run_id)
             logging.info(f"Stage 1 Complete. Newly harvested leads: {harvested_count}")
         except Exception as e:
             logging.error(f"Fatal error in Stage 1 (Maps Scraper): {e}", exc_info=True)
             return
+    else:
+        logging.info("Skipping Stage 1 (Scraping skipped by flag).")
 
-    # 2. Path B & Recovery Engine (discovers unlisted domains for established leads)
+    # 2. Stage 2: Audit & Deterministic Classification Engine
     if not args.skip_audit:
-        logging.info("--- Stage 2: Processing No-Website Leads & Cross-Directory Recovery ---")
+        logging.info("--- Stage 2: Running Conversion & Quality Auditor ---")
         try:
-            auditor.process_no_website_leads(config)
-            logging.info("Stage 2 Complete. No-website leads processed & cross-directory recovery finished.")
+            re_audit = getattr(args, "re_audit", False)
+            await auditor.run_audit_pipeline(config, re_audit=re_audit)
+            logging.info("Stage 2 Complete. All leads audited and classified.")
         except Exception as e:
-            logging.error(f"Error in Stage 2 (No-Website Recovery): {e}", exc_info=True)
+            logging.error(f"Error in Stage 2 (Site Auditor): {e}", exc_info=True)
+    else:
+        logging.info("Skipping Stage 2 (Auditing skipped by flag).")
 
-    # 3. Path A Audit Engine (audits standard sites + newly recovered domains)
-    if not args.skip_audit:
-        logging.info("--- Stage 3: Running Conversion & Quality Auditor ---")
-        try:
-            await auditor.run_audit_pipeline(config)
-            logging.info("Stage 3 Complete. All pending leads audited and classified.")
-        except Exception as e:
-            logging.error(f"Error in Stage 3 (Site Auditor): {e}", exc_info=True)
-
-    # 4. Google Sheets Sync Engine
-    if not args.skip_sync:
-        logging.info("--- Stage 4: Syncing Leads to Google Sheets ---")
-        try:
-            synced_count = sheets.sync_to_sheets(config)
-            logging.info(f"Stage 4 Complete. Leads pushed to Google Sheets: {synced_count}")
-        except Exception as e:
-            logging.error(f"Error in Stage 4 (Google Sheets Sync): {e}", exc_info=True)
-            logging.warning("Data remains safely cached in SQLite and can be synced on the next run.")
+    # Fetch stats and complete run record
+    stats = database.get_pipeline_stats(db_path=db_path)
+    ready_count = stats.get("outreach_ready", 0)
+    total_audited = stats.get("total", 0) - stats.get("new", 0)
+    database.complete_run(run_id, harvested=harvested_count, audited=total_audited, ready=ready_count, db_path=db_path)
 
     elapsed = round(time.time() - start_time, 2)
     logging.info(f"=== Pipeline Cycle Finished in {elapsed}s ===")
+
+    # Display clean CLI Summary
+    print("\n" + "=" * 60)
+    print("                PIPELINE STATUS SUMMARY")
+    print("=" * 60)
+    print(f"  Total Stored Leads:     {stats.get('total', 0)}")
+    print(f"  Outreach Ready:         {stats.get('outreach_ready', 0)}")
+    print(f"  Missing Contact Info:   {stats.get('missing_info', 0)}")
+    print(f"  Contacted:              {stats.get('contacted', 0)}")
+    print(f"  Disqualified:           {stats.get('disqualified', 0)}")
+    print(f"  Pending Audits (New):   {stats.get('new', 0)}")
+    print("=" * 60)
+    print("  Launch the daily verification cockpit:")
+    print("    python dashboard.py")
+    print("=" * 60 + "\n")
 
 
 def main() -> None:

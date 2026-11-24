@@ -1,6 +1,6 @@
 {
   "app": {
-    "db_path": "lead_pipeline.db",
+    "db_path": "data/lead_pipeline.db",
     "target_country": "US",
     "log_level": "INFO",
     "excluded_domains": [
@@ -15,10 +15,57 @@
       "tiktok.com"
     ]
   },
+  "queue": {
+    "daily_queue_size": 35,
+    "base_scores": {
+      "dead_domain_score": 5.0,
+      "no_website_score": 4.0,
+      "max_review_bonus": 5.0,
+      "min_phone_digits": 10,
+      "exclude_toll_free_from_outreach": true,
+      "toll_free_penalty": -3.0
+    },
+    "required_outreach_fields": {
+      "require_business_name": true,
+      "require_completed_audit": true,
+      "at_least_one_contact": [
+        "dm_email",
+        "generic_email",
+        "clean_phone",
+        "form_url",
+        "facebook_url",
+        "instagram_url",
+        "whatsapp_url"
+      ]
+    },
+    "ranking_weights": {
+      "broken_mobile": 3.0,
+      "missing_lead_capture": 2.5,
+      "unclickable_phone": 2.0,
+      "slow_load": 1.5,
+      "server_delay": 1.5,
+      "high_ttfb": 1.5,
+      "heavy_page": 1.0,
+      "builder_bloat": 1.0,
+      "thin_architecture": 1.5,
+      "content_starved": 1.0,
+      "zero_visual_proof": 1.5,
+      "obstructive_sticky_header": 2.0,
+      "obstructive_header": 2.0,
+      "zero_trust_anchors": 1.5,
+      "bot_challenge_gated": 1.5,
+      "render_incomplete": 1.5,
+      "no_website": 4.0,
+      "has_email_bonus": 2.0,
+      "has_mobile_phone_bonus": 1.5,
+      "has_whatsapp_bonus": 1.5,
+      "review_count_factor": 0.02
+    }
+  },
   "scraper_c1": {
     "browser_channel": "chrome",
-    "headless": false,
-    "user_data_dir": "./chrome_lead_profile",
+    "headless": true,
+    "user_data_dir": "./data/chrome_lead_profile",
     "viewport": {
       "width": 1920,
       "height": 1080
@@ -87,21 +134,24 @@
       "--no-sandbox",
       "--disable-dev-shm-usage"
     ],
-    "page_timeout_ms": 15000,
+    "page_timeout_ms": 25000,
+    "hydration_wait_ms": 4000,
     "mobile_user_agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1",
     "mobile_viewport": {
       "width": 390,
       "height": 844
     },
     "thresholds": {
-      "max_load_time_seconds": 4.5,
-      "max_ttfb_ms": 1500,
+      "max_load_time_seconds": 6.0,
+      "max_ttfb_ms": 2500,
       "max_page_weight_mb": 5.0,
       "max_dom_nodes": 1800,
       "min_dom_nodes": 250,
       "min_text_length": 600,
       "min_images_count": 2,
-      "max_sticky_header_pct": 25
+      "max_sticky_header_pct": 25,
+      "min_rendered_dom_nodes": 80,
+      "min_rendered_text_chars": 150
     },
     "generic_email_prefixes": [
       "info@",
@@ -115,17 +165,57 @@
       "help@",
       "billing@",
       "enquiry@"
+    ],
+    "form_embed_domains": [
+      "form",
+      "typeform",
+      "hubspot",
+      "jotform",
+      "leadconnectorhq",
+      "msgsndr",
+      "calendly",
+      "roofr",
+      "jobnimbus",
+      "acculynx",
+      "housecallpro",
+      "podium",
+      "wufoo"
+    ],
+    "form_keywords": [
+      "contact",
+      "quote",
+      "estimate",
+      "schedule",
+      "book",
+      "request",
+      "get-started",
+      "consultation",
+      "reach-us",
+      "get-in-touch"
+    ],
+    "agency_credit_patterns": [
+      "designed by",
+      "powered by",
+      "website by",
+      "built by",
+      "marketing by",
+      "developed by",
+      "seo by",
+      "created by"
+    ],
+    "email_noise_tokens": [
+      "sentry",
+      "wixpress",
+      "cloudflare",
+      "google",
+      "gstatic",
+      "schema.org",
+      "wordpress",
+      "elementor",
+      "example.com",
+      "domain.com",
+      "yourdomain.com",
+      "email.com"
     ]
-  },
-  "sheets": {
-    "credentials_file": "credentials.json",
-    "spreadsheet_id": "12h3Mixc5vN-Dh951lIepWKjf0sDE8Z5-4THhtyGjh5w",
-    "tabs": {
-      "today": "Today",
-      "outreach_ready": "Outreach Ready",
-      "missing_info": "Missing Info",
-      "disqualified": "Disqualified",
-      "archive": "Archive"
-    }
   }
 }

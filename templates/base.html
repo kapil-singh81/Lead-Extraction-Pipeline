@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Daily Lead Verification Cockpit{% endblock %}</title>
+  <script>
+    // Immediate inline theme loader to eliminate any layout/theme flash
+    (function() {
+      try {
+        var savedTheme = localStorage.getItem('theme');
+        // Default is dark mode. If explicitly saved as 'light', remove dark class.
+        if (savedTheme === 'light') {
+          document.documentElement.classList.remove('dark');
+        } else {
+          document.documentElement.classList.add('dark');
+        }
+      } catch (e) {
+        document.documentElement.classList.add('dark');
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/style.css?v=20261123_contacted_v1">
+  <script src="/static/htmx.min.js"></script>
+</head>
+<body>
+  <div class="app-container">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-icon">⚡</div>
+        <div class="brand-text">
+          <h2>LeadPipeline</h2>
+          <span>Micro-CRM / WAL</span>
+        </div>
+      </div>
+
+      <nav class="nav-menu">
+        <a href="/" class="nav-item {% if active_nav == 'queue' %}active{% endif %}">
+          <span>🎯</span> Daily Queue
+        </a>
+        <a href="/contacted" class="nav-item {% if active_nav == 'contacted' %}active{% endif %}">
+          <span>📞</span> Contacted Leads
+        </a>
+        <a href="/leads" class="nav-item {% if active_nav == 'leads' %}active{% endif %}">
+          <span>📋</span> All Stored Leads
+        </a>
+      </nav>
+
+      <div>
+        <div class="sidebar-section-title">Pipeline Breakdown</div>
+        <div id="sidebar-counts" class="stats-list">
+          {% include "partials/sidebar_counts.html" %}
+        </div>
+      </div>
+
+      <div class="sidebar-footer">
+        <div class="theme-switch-group" style="width: 100%; justify-content: center; margin-bottom: 8px;" role="group" aria-label="Sidebar theme switch">
+          <button type="button" class="theme-pill-btn" id="side-theme-btn-dark" onclick="setTheme('dark')" style="flex: 1; justify-content: center;" title="Switch to Dark Mode">
+            <span>🌙</span> <span>Dark</span>
+          </button>
+          <button type="button" class="theme-pill-btn" id="side-theme-btn-light" onclick="setTheme('light')" style="flex: 1; justify-content: center;" title="Switch to Light Mode">
+            <span>☀️</span> <span>Light</span>
+          </button>
+        </div>
+        <div class="wal-badge">
+          <span>●</span> SQLite WAL Active
+        </div>
+        <div>Target: {{ daily_queue_size | default(35) }} leads/day</div>
+      </div>
+    </aside>
+
+    <!-- Main Wrapper -->
+    <main class="main-wrapper">
+      <header class="top-bar">
+        <div class="page-heading">
+          <h1>{% block header_title %}Daily Verification Queue{% endblock %}</h1>
+          <p>{% block header_subtitle %}Inspect live audit results and confirm pitch angles before outreach{% endblock %}</p>
+        </div>
+
+        <div class="top-bar-actions" style="display: flex; align-items: center; gap: 16px;">
+          <div class="theme-switch-group" role="group" aria-label="Theme toggle switch">
+            <button type="button" class="theme-pill-btn" id="top-theme-btn-dark" onclick="setTheme('dark')" title="Switch to Dark Mode (Alt+D)">
+              <span>🌙</span> <span>Dark</span>
+            </button>
+            <button type="button" class="theme-pill-btn" id="top-theme-btn-light" onclick="setTheme('light')" title="Switch to Light Mode (Alt+D)">
+              <span>☀️</span> <span>Light</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="progress-tracker">
+          {% block progress %}
+          <div class="progress-widget">
+            <div class="progress-text">
+              <div class="progress-title">{{ done_today | default(0) }} / {{ daily_queue_size | default(35) }} Reviewed Today</div>
+              <div class="progress-sub">{{ remaining_quota | default(0) }} Remaining</div>
+            </div>
+            <div class="progress-bar-bg">
+              {% set pct = [((done_today | default(0)) / (daily_queue_size | default(35)) * 100) | round | int, 100] | min %}
+              <div class="progress-bar-fill" style="width: {{ pct }}%;"></div>
+            </div>
+          </div>
+          {% endblock %}
+        </div>
+      </header>
+
+      <div class="content-container">
+        {% block content %}{% endblock %}
+      </div>
+    </main>
+  </div>
+
+  <script>
+    function updateThemeUI(theme) {
+      var isDark = theme === 'dark';
+      var darkBtns = [document.getElementById('top-theme-btn-dark'), document.getElementById('side-theme-btn-dark')];
+      var lightBtns = [document.getElementById('top-theme-btn-light'), document.getElementById('side-theme-btn-light')];
+
+      darkBtns.forEach(function(btn) {
+        if (btn) btn.classList.toggle('active', isDark);
+      });
+      lightBtns.forEach(function(btn) {
+        if (btn) btn.classList.toggle('active', !isDark);
+      });
+    }
+
+    function setTheme(theme) {
+      if (theme === 'dark') {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+      try {
+        localStorage.setItem('theme', theme);
+      } catch (e) {}
+      updateThemeUI(theme);
+    }
+
+    function toggleTheme() {
+      var isDark = document.documentElement.classList.contains('dark');
+      setTheme(isDark ? 'light' : 'dark');
+    }
+
+    // Keyboard shortcut: Alt+D toggles theme seamlessly
+    document.addEventListener('keydown', function(e) {
+      if (e.altKey && (e.key === 'd' || e.key === 'D')) {
+        e.preventDefault();
+        toggleTheme();
+      }
+    });
+
+    document.addEventListener('DOMContentLoaded', function() {
+      var isDark = document.documentElement.classList.contains('dark');
+      updateThemeUI(isDark ? 'dark' : 'light');
+    });
+
+    // --- 4-Slot Swappable Pitch System & Interactive Telemetry ---
+    window.leadTrackedApproaches = window.leadTrackedApproaches || {};
+
+    function setTrackedPitch(leadId, approachKey) {
+      if (!leadId || !approachKey) return;
+      var cleanId = String(leadId).replace(/^drawer-/, '');
+      window.leadTrackedApproaches[cleanId] = approachKey;
+      try {
+        localStorage.setItem('tracked_pitch_' + cleanId, approachKey);
+      } catch (e) {}
+
+      var inputEl = document.getElementById('tracked-pitch-' + cleanId);
+      if (inputEl) inputEl.value = approachKey;
+      var drawerInputEl = document.getElementById('tracked-pitch-drawer-' + cleanId);
+      if (drawerInputEl) drawerInputEl.value = approachKey;
+    }
+
+    function getTrackedPitch(leadId) {
+      var cleanId = String(leadId).replace(/^drawer-/, '');
+      var inputEl = document.getElementById('tracked-pitch-' + cleanId);
+      if (inputEl && inputEl.value) return inputEl.value;
+      var drawerInputEl = document.getElementById('tracked-pitch-drawer-' + cleanId);
+      if (drawerInputEl && drawerInputEl.value) return drawerInputEl.value;
+      if (window.leadTrackedApproaches && window.leadTrackedApproaches[cleanId]) {
+        return window.leadTrackedApproaches[cleanId];
+      }
+      try {
+        var stored = localStorage.getItem('tracked_pitch_' + cleanId);
+        if (stored) return stored;
+      } catch (e) {}
+      return 'naive_curiosity';
+    }
+
+    function getPitchesData(leadId) {
+      var dataScript = document.getElementById('pitches-data-' + leadId);
+      if (!dataScript) {
+        var cleanId = String(leadId).replace(/^drawer-/, '');
+        dataScript = document.getElementById('pitches-data-' + cleanId) ||
+                     document.getElementById('pitches-data-drawer-' + cleanId);
+      }
+      if (!dataScript) return null;
+      try {
+        return JSON.parse(dataScript.textContent);
+      } catch (e) {
+        console.error('Error parsing pitches data for', leadId, e);
+        return null;
+      }
+    }
+
+    function updateWhatsAppUrl(leadId, digits, text, title) {
+      var cleanId = String(leadId).replace(/^drawer-/, '');
+      var freshWaUrl = digits ? ('https://wa.me/' + digits + (text ? '?text=' + encodeURIComponent(text) : '')) : null;
+      if (!freshWaUrl) return;
+      var candidates = [
+        document.getElementById('btn-wa-launcher-' + leadId),
+        document.getElementById('btn-wa-launcher-' + cleanId),
+        document.getElementById('btn-wa-launcher-drawer-' + cleanId)
+      ];
+      candidates.forEach(function(btn) {
+        if (btn) {
+          btn.href = freshWaUrl;
+          if (title) btn.setAttribute('title', 'Launch WhatsApp with ' + title + ' message');
+        }
+      });
+    }
+
+    function handleSlotTabClick(leadId, slotId) {
+      var data = getPitchesData(leadId);
+      if (!data || !data.slots || !data.slots[slotId]) return;
+
+      var tab = document.getElementById('tab-' + leadId + '-' + slotId);
+      if (!tab) return;
+      var variant = tab.getAttribute('data-active-variant') || 'primary';
+      var approachKey = data.slots[slotId][variant];
+      var approach = data.approaches ? data.approaches[approachKey] : null;
+      if (!approach) return;
+
+      // Update active styling on tabs container
+      var container = document.getElementById('slot-tabs-container-' + leadId);
+      if (container) {
+        container.querySelectorAll('.slot-tab-btn').forEach(function(btn) {
+          btn.classList.toggle('active', btn.id === tab.id);
+        });
+      }
+
+      // Update hidden tracked pitch input
+      setTrackedPitch(leadId, approachKey);
+
+      // Load pitch text into single textarea
+      var textarea = document.getElementById('pitch-textarea-' + leadId);
+      if (textarea) {
+        textarea.value = approach.text || '';
+      }
+
+      // Update dynamic WhatsApp link
+      updateWhatsAppUrl(leadId, data.digits, approach.text, approach.title);
+    }
+
+    function handleSlotSwapClick(leadId, slotId, event) {
+      if (event && event.stopPropagation) {
+        event.stopPropagation();
+      }
+
+      var data = getPitchesData(leadId);
+      if (!data || !data.slots || !data.slots[slotId]) return;
+
+      var tab = document.getElementById('tab-' + leadId + '-' + slotId);
+      if (!tab) return;
+
+      var currVariant = tab.getAttribute('data-active-variant') || 'primary';
+      var nextVariant = (currVariant === 'primary') ? 'alt' : 'primary';
+      tab.setAttribute('data-active-variant', nextVariant);
+
+      var slotDef = data.slots[slotId];
+      var nextLabel = slotDef[nextVariant + '_label'];
+      var swapTitle = 'Switch to ' + (nextVariant === 'primary' ? slotDef.alt_label : slotDef.primary_label);
+
+      // Update tab title
+      var titleEl = document.getElementById('slot-title-' + leadId + '-' + slotId);
+      if (titleEl) {
+        titleEl.textContent = nextLabel;
+      }
+      var swapBtn = tab.querySelector('.slot-swap-btn');
+      if (swapBtn) {
+        swapBtn.setAttribute('title', swapTitle);
+      }
+
+      // Trigger selection of this swapped approach
+      var approachKey = slotDef[nextVariant];
+      var approach = data.approaches ? data.approaches[approachKey] : null;
+      if (!approach) return;
+
+      // Update active tab class
+      var container = document.getElementById('slot-tabs-container-' + leadId);
+      if (container) {
+        container.querySelectorAll('.slot-tab-btn').forEach(function(btn) {
+          btn.classList.toggle('active', btn.id === tab.id);
+        });
+      }
+
+      setTrackedPitch(leadId, approachKey);
+
+      var textarea = document.getElementById('pitch-textarea-' + leadId);
+      if (textarea) {
+        textarea.value = approach.text || '';
+      }
+
+      updateWhatsAppUrl(leadId, data.digits, approach.text, approach.title);
+    }
+
+    function copyActivePitchToClipboard(leadId, btnElement) {
+      var textarea = document.getElementById('pitch-textarea-' + leadId);
+      if (!textarea) return;
+      var text = (textarea.value || '').trim();
+
+      var inputEl = document.getElementById('tracked-pitch-' + leadId) ||
+                    document.getElementById('tracked-pitch-' + String(leadId).replace(/^drawer-/, ''));
+      var approachKey = inputEl ? inputEl.value : 'naive_curiosity';
+
+      var cleanId = String(leadId).replace(/^drawer-/, '');
+      try {
+        fetch('/api/leads/' + cleanId + '/track-pitch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: 'pitch_type=' + encodeURIComponent(approachKey)
+        }).catch(function() {});
+      } catch (e) {}
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function() {
+          showCopySuccess(btnElement);
+        }).catch(function() {
+          fallbackCopyText(text, btnElement);
+        });
+      } else {
+        fallbackCopyText(text, btnElement);
+      }
+    }
+
+    function handleTextareaLiveInput(leadId, textareaEl) {
+      var digits = textareaEl.getAttribute('data-digits');
+      var text = textareaEl.value;
+      updateWhatsAppUrl(leadId, digits, text, 'Customized');
+    }
+
+    function syncActiveTextareaToWa(btn, leadId) {
+      var cleanId = String(leadId).replace(/^drawer-/, '');
+      var textarea = document.getElementById('pitch-textarea-' + leadId) ||
+                     document.getElementById('pitch-textarea-' + cleanId) ||
+                     document.getElementById('pitch-textarea-drawer-' + cleanId);
+      if (!textarea) return true;
+      var digits = textarea.getAttribute('data-digits');
+      if (digits) {
+        btn.href = 'https://wa.me/' + digits + (textarea.value ? '?text=' + encodeURIComponent(textarea.value) : '');
+      }
+      return true;
+    }
+
+    function copyPitchToClipboard(textElementId, btnElement, leadId, approachKey) {
+      var textEl = document.getElementById(textElementId);
+      if (!textEl) return;
+      var text = (textEl.value !== undefined ? textEl.value : textEl.innerText).trim();
+
+      if (leadId && approachKey) {
+        setTrackedPitch(leadId, approachKey);
+        var cleanId = String(leadId).replace(/^drawer-/, '');
+        try {
+          fetch('/api/leads/' + cleanId + '/track-pitch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'pitch_type=' + encodeURIComponent(approachKey)
+          }).catch(function() {});
+        } catch (e) {}
+      }
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function() {
+          showCopySuccess(btnElement);
+        }).catch(function() {
+          fallbackCopyText(text, btnElement);
+        });
+      } else {
+        fallbackCopyText(text, btnElement);
+      }
+    }
+
+    function fallbackCopyText(text, btnElement) {
+      var textArea = document.createElement("textarea");
+      textArea.value = text;
+      textArea.style.position = "fixed";
+      textArea.style.left = "-999999px";
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      try {
+        document.execCommand('copy');
+        showCopySuccess(btnElement);
+      } catch (err) {
+        console.error('Fallback copy error:', err);
+      }
+      document.body.removeChild(textArea);
+    }
+
+    function showCopySuccess(btnElement) {
+      if (!btnElement) return;
+      var originalHtml = btnElement.innerHTML;
+      btnElement.innerHTML = '<span>✓</span>';
+      btnElement.classList.add('copied');
+      btnElement.setAttribute('title', 'Copied to clipboard!');
+      setTimeout(function() {
+        btnElement.innerHTML = originalHtml;
+        btnElement.classList.remove('copied');
+        btnElement.setAttribute('title', 'Copy pitch to clipboard');
+      }, 1400);
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,706 @@
+{% if lead %}
+<div class="lead-card" id="lead-card-{{ lead.id }}">
+
+  <!-- Optional Flash Banner (After inline save or status update) -->
+  {% if status_saved or lead_updated %}
+    <div class="lead-flash-banner">
+      <span class="flash-icon">✓</span>
+      <span>{{ status_message | default("Changes saved successfully!") }}</span>
+    </div>
+  {% endif %}
+
+  <!-- Top identity & Priority -->
+  <div class="card-top">
+    <div class="biz-identity" style="flex: 1; min-width: 0;">
+      <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+        <h1 class="biz-name" id="view-name-{{ lead.id }}">{{ lead.business_name }}</h1>
+        <span class="status-badge {{ lead.status }}" id="badge-status-{{ lead.id }}">{{ lead.status | replace('_', ' ') }}</span>
+      </div>
+      <div class="biz-tags" style="display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; padding-bottom: 2px;">
+        {% if lead.niche %}
+          <span class="tag-badge" style="white-space: nowrap;">🏷️ {{ lead.niche }}</span>
+        {% endif %}
+        {% if lead.city %}
+          <span class="tag-badge location" style="white-space: nowrap;">📍 {{ lead.city }}{% if lead.country %}, {{ lead.country }}{% endif %}</span>
+        {% endif %}
+        {% if lead.rating and lead.rating > 0 %}
+          <span class="tag-badge rating" style="white-space: nowrap;">★ {{ "%.1f"|format(lead.rating) }} ({{ lead.review_count | default(0) }} reviews)</span>
+        {% endif %}
+        {% if lead.maps_url %}
+          <a href="{{ lead.maps_url }}" target="_blank" class="tag-badge" style="text-decoration: none; color: var(--text-secondary); white-space: nowrap;">
+            🗺️ Google Maps ↗
+          </a>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Right Header Column: Pencil Button in Top Right Corner ABOVE Pitch Priority Score -->
+    <div class="header-right-col" style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; margin-left: 16px;">
+      <!-- Edit Data Freedom Trigger Button (Chota / Shorter Pencil Icon Only) -->
+      <button type="button"
+              class="btn-edit-trigger icon-only mini-pencil"
+              id="btn-edit-trigger-{{ lead.id }}"
+              onclick="toggleLeadEdit('{{ lead.id }}')"
+              title="Edit contractor data"
+              style="width: 24px; height: 24px; min-width: 24px; min-height: 24px; padding: 0; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 12px; margin: 0;">
+        <span>✏️</span>
+      </button>
+
+      <div class="priority-badge" style="margin-top: 0;">
+        <span class="priority-label">Pitch Priority</span>
+        <span class="priority-num">{{ lead.priority_score | default(0.0) }}</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Inline Edit Panel (Opened exclusively — card inspection content behind is hidden) -->
+  <div class="lead-inline-edit-box" id="edit-panel-{{ lead.id }}" style="display: none;">
+    <div class="edit-box-header">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span style="font-size: 16px;">✏️</span>
+        <strong>Edit Contractor Record: {{ lead.business_name }}</strong>
+      </div>
+      <button type="button"
+              class="btn-edit-close-top"
+              onclick="toggleLeadEdit('{{ lead.id }}')"
+              title="Close edit and return to lead inspection view">
+        ✕ Close Edit
+      </button>
+    </div>
+
+    <form hx-post="/api/leads/{{ lead.id }}/update"
+          hx-target="#lead-card-{{ lead.id }}"
+          hx-swap="outerHTML"
+          class="lead-edit-form">
+      
+      <div class="edit-form-grid">
+        <!-- 1. Company Information -->
+        <div class="edit-group-title">🏢 Company & Contact Details</div>
+
+        <div class="edit-field">
+          <label>Business Name</label>
+          <input type="text" name="business_name" value="{{ lead.business_name }}" required>
+        </div>
+        <div class="edit-field">
+          <label>Website URL (Optional)</label>
+          <input type="text"
+                 name="website_url"
+                 value="{% if lead.website_url and lead.website_url != 'None' %}{{ lead.website_url }}{% endif %}"
+                 placeholder="https://... (leave blank if none)">
+        </div>
+        <div class="edit-field">
+          <label>Phone Number (Optional)</label>
+          <input type="text"
+                 name="phone"
+                 value="{% if lead.phone and lead.phone != 'None' %}{{ lead.phone }}{% endif %}"
+                 placeholder="(214) 555-0100 (optional)">
+        </div>
+        <div class="edit-field">
+          <label>Carrier / Line Type</label>
+          <select name="line_type">
+            <option value="Local" {% if lead.line_type == 'Local' %}selected{% endif %}>Local</option>
+            <option value="Mobile" {% if lead.line_type == 'Mobile' %}selected{% endif %}>Mobile (Cell)</option>
+            <option value="VoIP" {% if lead.line_type == 'VoIP' %}selected{% endif %}>VoIP</option>
+            <option value="Toll-Free" {% if lead.line_type == 'Toll-Free' %}selected{% endif %}>Toll-Free</option>
+            <option value="Unknown" {% if lead.line_type == 'Unknown' or not lead.line_type %}selected{% endif %}>Unknown</option>
+          </select>
+        </div>
+        <div class="edit-field">
+          <label>WhatsApp Link (Optional)</label>
+          <input type="text"
+                 name="whatsapp_url"
+                 value="{% if lead.whatsapp_url and lead.whatsapp_url != 'None' %}{{ lead.whatsapp_url }}{% endif %}"
+                 placeholder="https://wa.me/1... (optional)">
+        </div>
+        <div class="edit-field">
+          <label>City / Region (Optional)</label>
+          <input type="text"
+                 name="city"
+                 value="{% if lead.city and lead.city != 'None' %}{{ lead.city }}{% endif %}"
+                 placeholder="Dallas TX (optional)">
+        </div>
+        <div class="edit-field">
+          <label>Niche / Category (Optional)</label>
+          <input type="text"
+                 name="niche"
+                 value="{% if lead.niche and lead.niche != 'None' %}{{ lead.niche }}{% endif %}"
+                 placeholder="commercial roofer (optional)">
+        </div>
+
+        <!-- 2. Decision Maker (Optional) -->
+        <div class="edit-group-title">👤 Decision Maker (Optional)</div>
+
+        <div class="edit-field">
+          <label>Decision Maker Name</label>
+          <input type="text"
+                 name="dm_name"
+                 value="{% if lead.dm_name and lead.dm_name != 'None' %}{{ lead.dm_name }}{% endif %}"
+                 placeholder="Owner / CEO / Estimator (optional)">
+        </div>
+        <div class="edit-field">
+          <label>Decision Maker Title</label>
+          <input type="text"
+                 name="dm_title"
+                 value="{% if lead.dm_title and lead.dm_title != 'None' %}{{ lead.dm_title }}{% endif %}"
+                 placeholder="e.g. Owner, Managing Director (optional)">
+        </div>
+        <div class="edit-field">
+          <label>Direct Email</label>
+          <input type="text"
+                 name="dm_email"
+                 value="{% if lead.dm_email and lead.dm_email != 'None' %}{{ lead.dm_email }}{% endif %}"
+                 placeholder="direct@domain.com (optional)">
+        </div>
+        <div class="edit-field">
+          <label>LinkedIn Profile</label>
+          <input type="text"
+                 name="dm_linkedin"
+                 value="{% if lead.dm_linkedin and lead.dm_linkedin != 'None' %}{{ lead.dm_linkedin }}{% endif %}"
+                 placeholder="https://linkedin.com/in/... (optional)">
+        </div>
+        <div class="edit-field">
+          <label>General Email</label>
+          <input type="text"
+                 name="generic_email"
+                 value="{% if lead.generic_email and lead.generic_email != 'None' %}{{ lead.generic_email }}{% endif %}"
+                 placeholder="info@domain.com (optional)">
+        </div>
+
+        <!-- 3. Pipeline & Notes -->
+        <div class="edit-group-title">⚙️ Pipeline Status & Research Notes</div>
+
+        <div class="edit-field">
+          <label>Pipeline Status</label>
+          <select name="status">
+            <option value="outreach_ready" {% if lead.status == 'outreach_ready' %}selected{% endif %}>Outreach Ready</option>
+            <option value="contacted" {% if lead.status == 'contacted' %}selected{% endif %}>Contacted</option>
+            <option value="missing_info" {% if lead.status == 'missing_info' %}selected{% endif %}>Missing Info</option>
+            <option value="deferred" {% if lead.status == 'deferred' %}selected{% endif %}>Deferred</option>
+            <option value="disqualified" {% if lead.status == 'disqualified' %}selected{% endif %}>Disqualified</option>
+          </select>
+        </div>
+        <div class="edit-field" style="grid-column: span 2;">
+          <label>Internal Research Notes</label>
+          <textarea name="manual_notes" rows="2" placeholder="Add custom notes, context, or corrections...">{% if lead.manual_notes and lead.manual_notes != 'None' %}{{ lead.manual_notes }}{% endif %}</textarea>
+        </div>
+      </div>
+
+      <div class="edit-actions-row">
+        <button type="submit" class="btn-action btn-save-edit">
+          💾 Save Changes
+        </button>
+        <button type="button" class="btn-action btn-cancel-edit" onclick="toggleLeadEdit('{{ lead.id }}')">
+          ✕ Cancel & Return to Card
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Main Lead Inspection View Body (Hidden when Edit Form is open) -->
+  <div id="card-view-content-{{ lead.id }}" class="card-view-body">
+
+  <!-- Prominent Clickable Website Link -->
+  <div class="site-inspect-box">
+    <div class="site-domain-info">
+      <span class="site-domain-label">Target Website / Landing Page</span>
+      <span class="site-domain-url">
+        {% if lead.website_url %}
+          {{ lead.clean_domain | default(lead.website_url) }}
+        {% else %}
+          <em style="color: #94a3b8;">No Website Listed (Direct Maps Listing)</em>
+        {% endif %}
+      </span>
+    </div>
+    {% if lead.website_url %}
+      <a href="{{ lead.website_url | external_url }}" target="_blank" rel="noopener noreferrer" class="btn-open-site">
+        Visit Website ↗
+      </a>
+    {% endif %}
+  </div>
+
+  <!-- Detected Conversion Flaws & Pitch Angles -->
+  <div class="audit-flaws-section">
+    <div class="section-label">
+      <span>⚠️</span> Detected Conversion Flaws & Weak Points
+    </div>
+
+    {% if lead.audit and lead.audit.flaw_labels %}
+      <div class="flaws-grid">
+        {% for flaw in lead.audit.flaw_labels %}
+          <div class="flaw-pill">
+            <span class="flaw-icon">🚩</span>
+            <span>{{ flaw }}</span>
+          </div>
+        {% endfor %}
+      </div>
+    {% elif lead.status_reason %}
+      <div class="flaw-pill">
+        <span class="flaw-icon">ℹ️</span>
+        <span>{{ lead.status_reason }}</span>
+      </div>
+    {% else %}
+      <div class="no-flaws-banner">
+        No critical technical flaws detected. Verified baseline opportunity.
+      </div>
+    {% endif %}
+  </div>
+
+  <!-- Actionable Contacts -->
+  <div class="contacts-section">
+    <div class="section-label">
+      <span>📞</span> Actionable Contact Info
+    </div>
+
+    <div class="contacts-grid">
+      <!-- Phone -->
+      <div class="contact-card">
+        <span class="contact-channel">Phone</span>
+        <span class="contact-val">
+          {% if lead.clean_phone or lead.phone %}
+            <a href="tel:{{ lead.clean_phone | default(lead.phone) }}">
+              {{ lead.clean_phone | default(lead.phone) }}
+            </a>
+            <span class="line-tag">{{ lead.line_type | default('Local') }}</span>
+          {% else %}
+            <span style="color: #94a3b8;">Not Available</span>
+          {% endif %}
+        </span>
+      </div>
+
+      <!-- Decision Maker -->
+      <div class="contact-card">
+        <span class="contact-channel">Decision Maker</span>
+        <span class="contact-val">
+          {% if lead.dm_name %}
+            {{ lead.dm_name }} {% if lead.dm_title %}<small style="color: #64748b;">({{ lead.dm_title }})</small>{% endif %}
+            {% if lead.dm_linkedin %}
+              <a href="{{ lead.dm_linkedin }}" target="_blank" style="margin-left: 4px;">[LinkedIn]</a>
+            {% endif %}
+          {% else %}
+            <span style="color: #94a3b8;">Unlisted</span>
+          {% endif %}
+        </span>
+      </div>
+
+      <!-- Email -->
+      <div class="contact-card">
+        <span class="contact-channel">Email Address</span>
+        <span class="contact-val">
+          {% if lead.dm_email %}
+            <a href="mailto:{{ lead.dm_email }}">{{ lead.dm_email }}</a> <small>(Direct)</small>
+          {% elif lead.generic_email %}
+            <a href="mailto:{{ lead.generic_email }}">{{ lead.generic_email }}</a> <small>(General)</small>
+          {% else %}
+            <span style="color: #94a3b8;">Not Found</span>
+          {% endif %}
+        </span>
+      </div>
+
+      <!-- Digital Channels -->
+      <div class="contact-card" style="grid-column: span 2; position: relative;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+          <span class="contact-channel">Digital Web Channels</span>
+          <button type="button"
+                  class="btn-add-channel-plus"
+                  onclick="toggleAddChannelPrompt('{{ lead.id }}')"
+                  title="Add new digital web channel (+)"
+                  style="width: 20px; height: 20px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary); font-size: 13px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; line-height: 1;">
+            +
+          </button>
+        </div>
+
+        <!-- Inline Add Digital Channel Input Box (Toggled by + sign) -->
+        <div id="add-channel-box-{{ lead.id }}" style="display: none; margin: 8px 0; padding: 8px 10px; background: var(--bg-subtle); border: 1px solid var(--border-color); border-radius: 6px;">
+          <form hx-post="/api/leads/{{ lead.id }}/add-channel"
+                hx-target="#lead-card-{{ lead.id }}"
+                hx-swap="outerHTML"
+                style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+            <select name="channel_type" style="padding: 4px 6px; font-size: 11px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary);">
+              <option value="facebook">📘 Facebook</option>
+              <option value="instagram">📸 Instagram</option>
+              <option value="linkedin">💼 LinkedIn</option>
+              <option value="twitter">🐦 X/Twitter</option>
+              <option value="form">📝 Contact Form</option>
+              <option value="whatsapp">💬 WhatsApp</option>
+              <option value="custom">🌐 Custom Link</option>
+            </select>
+            <input type="text"
+                   name="channel_url"
+                   placeholder="https://... URL"
+                   required
+                   style="flex: 1; min-width: 140px; padding: 4px 6px; font-size: 11px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary);">
+            <button type="submit" class="btn-action" style="padding: 4px 8px; font-size: 11px; background: #2563eb; color: #fff; border: none; border-radius: 4px; cursor: pointer;">Add</button>
+            <button type="button" onclick="toggleAddChannelPrompt('{{ lead.id }}')" style="padding: 4px 6px; font-size: 11px; background: transparent; border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-muted); cursor: pointer;">✕</button>
+          </form>
+        </div>
+
+        <span class="contact-val" style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 4px;">
+          {% if lead.whatsapp_url %}
+            <span class="wa-channel-pill-group" style="display: inline-flex; align-items: center; gap: 4px;">
+              <a href="{{ lead.whatsapp_url | external_url }}" target="_blank" class="mini-chip web" style="text-decoration: none; font-size: 11px; background: #dcfce7; color: #15803d; font-weight: 600;">💬 WhatsApp ↗</a>
+              <button type="button"
+                      class="btn-wa-toggle remove"
+                      hx-post="/api/leads/{{ lead.id }}/toggle-whatsapp"
+                      hx-target="#lead-card-{{ lead.id }}"
+                      hx-swap="outerHTML"
+                      title="Remove WhatsApp as an active channel">✕</button>
+            </span>
+          {% else %}
+            <!-- Option to click and add WhatsApp as a channel -->
+            <button type="button"
+                    class="btn-wa-toggle add"
+                    hx-post="/api/leads/{{ lead.id }}/toggle-whatsapp"
+                    hx-target="#lead-card-{{ lead.id }}"
+                    hx-swap="outerHTML"
+                    title="Click to add WhatsApp as an outreach channel using contractor phone">
+              <span>+ WhatsApp</span>
+            </button>
+          {% endif %}
+          {% if lead.form_url %}
+            <a href="{{ lead.form_url | external_url }}" target="_blank" class="mini-chip web" style="text-decoration: none; font-size: 11px;">📝 Contact Page ↗</a>
+          {% endif %}
+          {% if lead.facebook_url %}
+            <a href="{{ lead.facebook_url | external_url }}" target="_blank" class="mini-chip web" style="text-decoration: none; font-size: 11px; background: #eff6ff; color: #1e40af;">📘 Facebook ↗</a>
+          {% endif %}
+          {% if lead.instagram_url %}
+            <a href="{{ lead.instagram_url | external_url }}" target="_blank" class="mini-chip web" style="text-decoration: none; font-size: 11px; background: #fdf2f8; color: #be185d;">📸 Instagram ↗</a>
+          {% endif %}
+          {% if lead.dm_linkedin %}
+            <a href="{{ lead.dm_linkedin | external_url }}" target="_blank" class="mini-chip web" style="text-decoration: none; font-size: 11px; background: #f0fdfa; color: #0f766e;">💼 LinkedIn ↗</a>
+          {% elif lead.audit and lead.audit.linkedin_url %}
+            <a href="{{ lead.audit.linkedin_url | external_url }}" target="_blank" class="mini-chip web" style="text-decoration: none; font-size: 11px; background: #f0fdfa; color: #0f766e;">💼 LinkedIn ↗</a>
+          {% endif %}
+          {% if lead.audit and lead.audit.twitter_url %}
+            <a href="{{ lead.audit.twitter_url | external_url }}" target="_blank" class="mini-chip web" style="text-decoration: none; font-size: 11px; background: #f8fafc; color: #0f172a;">🐦 X/Twitter ↗</a>
+          {% endif %}
+          {% if lead.audit and lead.audit.custom_channels %}
+            {% for c_name, c_url in lead.audit.custom_channels.items() %}
+              <a href="{{ c_url | external_url }}" target="_blank" class="mini-chip web" style="text-decoration: none; font-size: 11px; background: #f1f5f9; color: #334155;">🌐 {{ c_name | title }} ↗</a>
+            {% endfor %}
+          {% endif %}
+          {% if not lead.whatsapp_url and not lead.form_url and not lead.facebook_url and not lead.instagram_url and not lead.dm_linkedin and not (lead.audit and (lead.audit.linkedin_url or lead.audit.twitter_url or lead.audit.custom_channels)) %}
+            <span style="color: #94a3b8; font-size: 12px;">None Found</span>
+          {% endif %}
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Outreach Script Generator (Touch #1) -->
+  {% if lead.pitches %}
+  <input type="hidden" id="tracked-pitch-{{ lead.id }}" name="pitch_type" value="{{ lead.pitches.recommended | default('naive_curiosity') }}">
+  <script type="application/json" id="pitches-data-{{ lead.id }}">
+    {{ lead.pitches | tojson }}
+  </script>
+  <div class="pitch-cockpit-section" id="pitch-cockpit-{{ lead.id }}">
+    <div class="pitch-header-row">
+      <div class="section-label" style="margin-bottom: 0;">
+        <span>🎯</span> Outreach Script Generator (Touch #1)
+      </div>
+      <span class="meta-tag under-45">✓ &lt; 45 Words • Zero Links</span>
+    </div>
+
+    <!-- 4 Swappable Slot Tabs with Individual ⇄ Swap Buttons -->
+    <div class="slot-tabs-container" id="slot-tabs-container-{{ lead.id }}" role="tablist">
+      {% for slot_id, slot in lead.pitches.slots.items() %}
+        {% set is_rec_slot = (lead.pitches.recommended_slot == slot_id) %}
+        {% set is_alt_rec = (lead.pitches.recommended == slot.alt) %}
+        {% set active_variant = 'alt' if is_alt_rec else 'primary' %}
+        {% set active_label = slot.alt_label if is_alt_rec else slot.primary_label %}
+        <div class="slot-tab-btn {% if is_rec_slot %}active{% endif %}"
+             id="tab-{{ lead.id }}-{{ slot_id }}"
+             data-slot="{{ slot_id }}"
+             data-active-variant="{{ active_variant }}"
+             onclick="handleSlotTabClick('{{ lead.id }}', '{{ slot_id }}')">
+          <span class="slot-title" id="slot-title-{{ lead.id }}-{{ slot_id }}">{{ active_label }}</span>
+          {% if is_rec_slot %}
+            <span class="badge-rec" style="font-size: 9px; padding: 1px 4px; border-radius: 4px; background: rgba(37, 99, 235, 0.15); color: #2563eb; font-weight: 700; margin-left: 2px;">Rec</span>
+          {% endif %}
+          <button type="button"
+                  class="slot-swap-btn"
+                  onclick="handleSlotSwapClick('{{ lead.id }}', '{{ slot_id }}', event)"
+                  title="Switch between {{ slot.primary_label }} and {{ slot.alt_label }}">
+            ⇄
+          </button>
+        </div>
+      {% endfor %}
+    </div>
+
+    <!-- Single Compact Message Box with Top-Right Mini Copy Button & Live Editable Textarea -->
+    <div class="message-preview-container">
+      <button type="button"
+              class="btn-copy-mini"
+              onclick="copyActivePitchToClipboard('{{ lead.id }}', this)"
+              title="Copy pitch to clipboard">
+        <span>📋</span>
+      </button>
+      <textarea class="message-bubble message-textarea"
+                id="pitch-textarea-{{ lead.id }}"
+                name="message_text"
+                data-lead-id="{{ lead.id }}"
+                data-digits="{{ lead.pitches.digits | default('') }}"
+                oninput="handleTextareaLiveInput('{{ lead.id }}', this)"
+                placeholder="Type or customize your outreach message here...">{{ lead.recommended_pitch.text | default('') }}</textarea>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Organized Outreach Channel & Status Manager (Shown on Contacted Page individual cards; removed from main queue panel) -->
+  {% if is_contacted_page %}
+  <div class="channel-status-manager">
+    <div class="manager-header">
+      <div class="section-label" style="margin-bottom: 0;">
+        <span>⚙️</span> Outreach Channel & Status Management
+      </div>
+      <span class="status-badge {{ lead.status }}">Status: {{ lead.status | replace('_', ' ') }}</span>
+    </div>
+
+    <form class="status-manager-form">
+      <div class="manager-controls-grid">
+        <div class="ctrl-group">
+          <label class="ctrl-label">Outreach Channel Used</label>
+          <select id="sel-channel-{{ lead.id }}" name="channel" class="ctrl-select">
+            {% if lead.whatsapp_url %}<option value="whatsapp" selected>💬 WhatsApp</option>{% endif %}
+            <option value="phone" {% if not lead.whatsapp_url %}selected{% endif %}>📞 Phone Call</option>
+            <option value="email">✉️ Cold Email</option>
+            <option value="form">📝 Website Quote Form</option>
+            <option value="facebook">📘 Facebook</option>
+            <option value="sms">📱 SMS / Text</option>
+            <option value="linkedin">💼 LinkedIn</option>
+            {% if not lead.whatsapp_url %}<option value="whatsapp">💬 WhatsApp</option>{% endif %}
+          </select>
+        </div>
+
+        <div class="ctrl-group">
+          <label class="ctrl-label">Set Pipeline Status</label>
+          <select id="sel-status-{{ lead.id }}" name="action" class="ctrl-select">
+            <option value="contacted" selected>✓ Mark Contacted</option>
+            <option value="outreach_ready">🎯 Keep Outreach Ready</option>
+            <option value="missing_info">🔍 Move to Needs Research</option>
+            <option value="defer">⏳ Defer 24 Hours</option>
+            <option value="disqualified">❌ Disqualify Lead</option>
+          </select>
+        </div>
+
+        <div class="ctrl-group">
+          <label class="ctrl-label">Outcome / Response</label>
+          <select id="sel-outcome-{{ lead.id }}" name="outcome" class="ctrl-select">
+            <option value="sent" selected>Sent / Initiated</option>
+            <option value="replied">Replied / Interested</option>
+            <option value="call_scheduled">Meeting / Call Scheduled</option>
+            <option value="left_voicemail">Left Voicemail</option>
+            <option value="no_answer">No Answer</option>
+            <option value="not_interested">Not Interested</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="ctrl-group" style="margin-top: 10px;">
+        <label class="ctrl-label">Outreach Notes / Custom Response</label>
+        <textarea id="txt-notes-{{ lead.id }}"
+                  name="notes"
+                  class="ctrl-textarea"
+                  rows="2"
+                  placeholder="Log notes, contractor response, or specific pitch details...">{% if lead.manual_notes and lead.manual_notes != 'None' %}{{ lead.manual_notes }}{% endif %}</textarea>
+      </div>
+
+      <div class="manager-btn-row">
+        <!-- Stay on Lead: Saves status and keeps card active for review -->
+        <button type="button"
+                class="btn-mgr-save"
+                onclick="submitStatusAction('{{ lead.id }}', true)"
+                title="Save status & channel without moving away from this lead">
+          <span>💾</span> Save Status (Stay Here)
+        </button>
+
+        <!-- Advance Queue: Saves status and progresses to next lead -->
+        <button type="button"
+                class="btn-mgr-next"
+                onclick="submitStatusAction('{{ lead.id }}', false)"
+                title="Save status and advance to next lead in queue">
+          <span>➡️</span> Save & Next Lead
+        </button>
+      </div>
+    </form>
+  </div>
+  {% endif %}
+
+  <!-- Quick 1-Click Action Bar -->
+  <div class="action-bar-container">
+    <div class="action-bar-title">Quick 1-Click Actions</div>
+
+    <div class="action-buttons-row">
+      {% if lead.whatsapp_launch_url %}
+        <a href="{{ lead.whatsapp_launch_url }}"
+           target="_blank"
+           rel="noopener noreferrer"
+           id="btn-wa-launcher-{{ lead.id }}"
+           class="btn-action btn-wa-launcher"
+           onclick="syncActiveTextareaToWa(this, '{{ lead.id }}')"
+           title="Direct link hopping to open WhatsApp with recommended message">
+          💬 Open WhatsApp ↗
+        </a>
+      {% endif %}
+
+      <button class="btn-action btn-channel"
+              style="border-color: #22c55e; color: #15803d;"
+              hx-post="/api/leads/{{ lead.id }}/action"
+              hx-include="#tracked-pitch-{{ lead.id }}, #pitch-textarea-{{ lead.id }}"
+              hx-vals='{"action": "contacted", "channel": "whatsapp"}'
+              hx-target="#queue-card-container"
+              hx-swap="innerHTML"
+              title="Log WhatsApp touch and advance queue">
+        💬 WhatsApp Message Sent
+      </button>
+
+      <button class="btn-action btn-channel btn-channel-fb"
+              hx-post="/api/leads/{{ lead.id }}/action"
+              hx-include="#tracked-pitch-{{ lead.id }}, #pitch-textarea-{{ lead.id }}"
+              hx-vals='{"action": "contacted", "channel": "facebook"}'
+              hx-target="#queue-card-container"
+              hx-swap="innerHTML"
+              title="Log Facebook touch and advance queue">
+        📘 FB Sent
+      </button>
+
+      <button class="btn-action btn-channel"
+              hx-post="/api/leads/{{ lead.id }}/action"
+              hx-include="#tracked-pitch-{{ lead.id }}, #pitch-textarea-{{ lead.id }}"
+              hx-vals='{"action": "contacted", "channel": "phone"}'
+              hx-target="#queue-card-container"
+              hx-swap="innerHTML">
+        📞 Call Logged
+      </button>
+
+      <button class="btn-action btn-channel"
+              hx-post="/api/leads/{{ lead.id }}/action"
+              hx-include="#tracked-pitch-{{ lead.id }}, #pitch-textarea-{{ lead.id }}"
+              hx-vals='{"action": "contacted", "channel": "email"}'
+              hx-target="#queue-card-container"
+              hx-swap="innerHTML">
+        ✉️ Email Sent
+      </button>
+
+      <button class="btn-action btn-channel"
+              hx-post="/api/leads/{{ lead.id }}/action"
+              hx-include="#tracked-pitch-{{ lead.id }}, #pitch-textarea-{{ lead.id }}"
+              hx-vals='{"action": "contacted", "channel": "form"}'
+              hx-target="#queue-card-container"
+              hx-swap="innerHTML">
+        📝 Form Filled
+      </button>
+
+      <button class="btn-action btn-missing"
+              hx-post="/api/leads/{{ lead.id }}/action"
+              hx-vals='{"action": "missing_info", "reason": "Moved to Research"}'
+              hx-target="#queue-card-container"
+              hx-swap="innerHTML">
+        🔍 Missing Info
+      </button>
+
+      <button class="btn-action btn-defer"
+              hx-post="/api/leads/{{ lead.id }}/action"
+              hx-vals='{"action": "defer"}'
+              hx-target="#queue-card-container"
+              hx-swap="innerHTML">
+        ⏳ Defer 24h
+      </button>
+
+      <button class="btn-action btn-disqualify"
+              hx-post="/api/leads/{{ lead.id }}/action"
+              hx-vals='{"action": "disqualified", "reason": "Site looks fine"}'
+              hx-target="#queue-card-container"
+              hx-swap="innerHTML">
+        ❌ Disqualify
+      </button>
+    </div>
+  </div>
+
+  </div> <!-- End card-view-content-{{ lead.id }} -->
+
+</div>
+
+<!-- Client JavaScript for Edit & Channel Toggling -->
+<script>
+  function toggleLeadEdit(id) {
+    const panel = document.getElementById('edit-panel-' + id);
+    const viewContent = document.getElementById('card-view-content-' + id);
+    const triggerBtn = document.getElementById('btn-edit-trigger-' + id);
+    if (panel) {
+      const isHidden = (panel.style.display === 'none' || !panel.style.display);
+      panel.style.display = isHidden ? 'block' : 'none';
+      if (viewContent) {
+        viewContent.style.display = isHidden ? 'none' : 'block';
+      }
+      if (triggerBtn) {
+        triggerBtn.innerHTML = isHidden ? '<span>✕</span>' : '<span>✏️</span>';
+        triggerBtn.setAttribute('title', isHidden ? 'Close edit' : 'Edit contractor data');
+        triggerBtn.classList.toggle('active', isHidden);
+      }
+      if (isHidden) {
+        panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+  }
+
+  function toggleAddChannelPrompt(id) {
+    const box = document.getElementById('add-channel-box-' + id);
+    if (box) {
+      box.style.display = (box.style.display === 'none' || !box.style.display) ? 'block' : 'none';
+    }
+  }
+
+  function submitStatusAction(leadId, stay) {
+    const chEl = document.getElementById('sel-channel-' + leadId);
+    const actEl = document.getElementById('sel-status-' + leadId);
+    const outEl = document.getElementById('sel-outcome-' + leadId);
+    const notesEl = document.getElementById('txt-notes-' + leadId);
+    const pitchTypeEl = document.getElementById('tracked-pitch-' + leadId);
+    const textareaEl = document.getElementById('pitch-textarea-' + leadId);
+
+    const ch = chEl ? chEl.value : 'phone';
+    const act = actEl ? actEl.value : 'contacted';
+    const outcome = outEl ? outEl.value : 'sent';
+    const notes = notesEl ? notesEl.value : '';
+    const pitchType = pitchTypeEl ? pitchTypeEl.value : 'naive_curiosity';
+    const msgText = textareaEl ? textareaEl.value : '';
+
+    const targetSelector = stay ? ('#lead-card-' + leadId) : '#queue-card-container';
+    const swapMode = stay ? 'outerHTML' : 'innerHTML';
+
+    htmx.ajax('POST', '/api/leads/' + leadId + '/action', {
+      target: targetSelector,
+      swap: swapMode,
+      values: {
+        action: act,
+        channel: ch,
+        outcome: outcome,
+        notes: notes,
+        stay: stay ? 'true' : 'false',
+        pitch_type: pitchType,
+        message_text: msgText
+      }
+    });
+  }
+</script>
+
+{% else %}
+
+<div class="empty-queue-card">
+  <div class="empty-icon">🎉</div>
+  <h2>Daily Queue Completed!</h2>
+  <p>
+    You have reviewed {{ done_today | default(0) }} leads today.
+    There are currently no more pending outreach-ready leads for today's quota.
+  </p>
+  <div style="display: flex; gap: 12px; margin-top: 12px;">
+    <a href="/contacted" class="btn-action btn-channel" style="text-decoration: none;">
+      View Contacted Today
+    </a>
+    <a href="/leads" class="btn-action" style="text-decoration: none; background: var(--bg-subtle); color: var(--text-primary); border: 1px solid var(--border-color);">
+      Browse All Stored Leads
+    </a>
+  </div>
+</div>
+
+{% endif %}

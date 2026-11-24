@@ -1,0 +1,306 @@
+{% extends "base.html" %}
+
+{% block title %}Master Leads Archive | LeadPipeline{% endblock %}
+{% block header_title %}Master Leads Archive{% endblock %}
+{% block header_subtitle %}Complete permanent SQLite archive of harvested businesses, status and history{% endblock %}
+
+{% block content %}
+<div class="archive-page-wrapper">
+  <!-- Toolbar: Filter Tabs + Search + View Mode Switcher -->
+  <div class="table-card">
+    <div class="table-filter-bar">
+      <!-- Status Tabs -->
+      <div class="status-tabs">
+        <a href="/leads?status=all{% if search %}&search={{ search }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
+           class="tab-btn {% if current_status == 'all' or not current_status %}active{% endif %}">
+          All ({{ stats.total | default(0) }})
+        </a>
+        <a href="/leads?status=outreach_ready{% if search %}&search={{ search }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
+           class="tab-btn {% if current_status == 'outreach_ready' %}active{% endif %}">
+          Outreach Ready ({{ stats.outreach_ready | default(0) }})
+        </a>
+        <a href="/leads?status=missing_info{% if search %}&search={{ search }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
+           class="tab-btn {% if current_status == 'missing_info' %}active{% endif %}">
+          Missing Info ({{ stats.missing_info | default(0) }})
+        </a>
+        <a href="/leads?status=contacted{% if search %}&search={{ search }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
+           class="tab-btn {% if current_status == 'contacted' %}active{% endif %}">
+          Contacted ({{ stats.contacted | default(0) }})
+        </a>
+        <a href="/leads?status=disqualified{% if search %}&search={{ search }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
+           class="tab-btn {% if current_status == 'disqualified' %}active{% endif %}">
+          Disqualified ({{ stats.disqualified | default(0) }})
+        </a>
+      </div>
+
+      <!-- Search & Controls -->
+      <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+        <!-- Search Form -->
+        <form method="GET" action="/leads" style="display: flex; gap: 8px;">
+          {% if current_status %}
+            <input type="hidden" name="status" value="{{ current_status }}">
+          {% endif %}
+          {% if view_mode %}
+            <input type="hidden" name="view" value="{{ view_mode }}">
+          {% endif %}
+          <input type="text"
+                 name="search"
+                 class="search-input"
+                 placeholder="Search name, phone, domain, flaw..."
+                 value="{{ search | default('') }}">
+          <select name="channel" class="search-input" style="padding: 6px 10px; width: auto;" onchange="this.form.submit()">
+            <option value="all" {% if current_channel == 'all' or not current_channel %}selected{% endif %}>All Channels</option>
+            <option value="whatsapp" {% if current_channel == 'whatsapp' %}selected{% endif %}>💬 WhatsApp</option>
+            <option value="phone" {% if current_channel == 'phone' %}selected{% endif %}>📞 Phone</option>
+            <option value="email" {% if current_channel == 'email' %}selected{% endif %}>✉️ Email</option>
+            <option value="form" {% if current_channel == 'form' %}selected{% endif %}>📝 Form</option>
+          </select>
+          <button type="submit" class="btn-action" style="background: var(--bg-subtle); border: 1px solid var(--border-color);">
+            Filter
+          </button>
+          {% if search %}
+            <a href="/leads?status={{ current_status | default('all') }}&view={{ view_mode | default('table') }}"
+               class="btn-action"
+               style="text-decoration: none; background: transparent; border: 1px solid var(--border-color); color: var(--text-muted);">
+              Clear
+            </a>
+          {% endif %}
+        </form>
+
+        <!-- View Switcher -->
+        <div class="view-toggle-bar">
+          <a href="/leads?status={{ current_status | default('all') }}{% if search %}&search={{ search }}{% endif %}&view=table"
+             class="view-toggle-btn {% if view_mode != 'grid' %}active{% endif %}"
+             title="Switch to compact tabular view">
+            <span>☰</span> Table View
+          </a>
+          <a href="/leads?status={{ current_status | default('all') }}{% if search %}&search={{ search }}{% endif %}&view=grid"
+             class="view-toggle-btn {% if view_mode == 'grid' %}active{% endif %}"
+             title="Switch to detailed cards grid view">
+            <span>▦</span> Cards Grid
+          </a>
+        </div>
+      </div>
+    </div>
+
+    {% if view_mode == 'grid' %}
+      <!-- Detailed Cards Grid View for Master Leads -->
+      <div style="padding: 24px; background: var(--bg-main);">
+        <div class="all-cards-grid">
+          {% if leads %}
+            {% for grid_lead in leads %}
+              <div class="card-grid-item" id="grid-lead-{{ grid_lead.id }}">
+                <div class="grid-card-banner">
+                  <span class="grid-lead-num">#{{ loop.index }} • Lead ID #{{ grid_lead.id }}</span>
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span class="status-badge {{ grid_lead.status }}">{{ grid_lead.status | replace('_', ' ') }}</span>
+                    <button class="btn-action"
+                            style="padding: 3px 8px; font-size: 11px; background: var(--bg-subtle); color: var(--text-primary); border: 1px solid var(--border-color);"
+                            hx-get="/api/leads/{{ grid_lead.id }}/modal"
+                            hx-target="#lead-drawer-content"
+                            hx-swap="innerHTML"
+                            onclick="openDrawer()">
+                      Slide-Out ↗
+                    </button>
+                  </div>
+                </div>
+                {% set lead = grid_lead %}
+                {% include "partials/lead_card.html" %}
+              </div>
+            {% endfor %}
+          {% else %}
+            <div class="empty-queue-card" style="grid-column: 1 / -1;">
+              <div class="empty-icon">🔍</div>
+              <h2>No Leads Found</h2>
+              <p>No leads matched the current filter or search criteria.</p>
+            </div>
+          {% endif %}
+        </div>
+      </div>
+
+    {% else %}
+      <!-- Compact CRM Table View with Slide-Over Drawer Trigger -->
+      <div style="overflow-x: auto;">
+        <table class="crm-table">
+          <thead>
+            <tr>
+              <th style="width: 50px;">ID</th>
+              <th style="width: 22%;">Business Name</th>
+              <th style="width: 110px;">Status</th>
+              <th style="width: 65px;">Score</th>
+              <th style="width: 14%;">City / Niche</th>
+              <th style="width: 18%;">Website</th>
+              <th style="width: 18%;">Contact Channels</th>
+              <th>Reason / Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% if leads %}
+              {% for lead in leads %}
+                <tr class="table-lead-row"
+                    id="row-lead-{{ lead.id }}"
+                    hx-get="/api/leads/{{ lead.id }}/modal"
+                    hx-target="#lead-drawer-content"
+                    hx-swap="innerHTML"
+                    onclick="handleRowClick(event)">
+                  <td style="font-family: monospace; color: var(--text-muted);">#{{ lead.id }}</td>
+                  <td>
+                    <strong style="color: var(--text-primary); font-size: 14px; display: block;">{{ lead.business_name }}</strong>
+                    {% if lead.rating and lead.rating > 0 %}
+                      <div style="font-size: 11px; color: #b45309;">★ {{ "%.1f"|format(lead.rating) }} ({{ lead.review_count | default(0) }})</div>
+                    {% endif %}
+                  </td>
+                  <td>
+                    <span class="status-badge {{ lead.status }}">{{ lead.status | replace('_', ' ') }}</span>
+                  </td>
+                  <td>
+                    <strong style="color: var(--accent-primary); font-size: 14px;">{{ lead.priority_score | default(0.0) }}</strong>
+                  </td>
+                  <td>
+                    <div>{{ lead.city | default('—') }}</div>
+                    <div style="font-size: 11px; color: var(--text-muted);">{{ lead.niche | default('') }}</div>
+                  </td>
+                  <td>
+                    {% if lead.website_url %}
+                      <a href="{{ lead.website_url | external_url }}"
+                         target="_blank"
+                         rel="noopener noreferrer"
+                         class="table-link"
+                         onclick="event.stopPropagation()">
+                        {{ lead.clean_domain | default('Visit Site') }} ↗
+                      </a>
+                    {% else %}
+                      <span style="color: var(--text-muted); font-size: 12px;">No Website</span>
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if lead.clean_phone %}
+                      <div>
+                        <a href="tel:{{ lead.clean_phone }}"
+                           class="table-link"
+                           onclick="event.stopPropagation()">
+                          📞 {{ lead.clean_phone }}
+                        </a>
+                      </div>
+                    {% endif %}
+                    {% if lead.whatsapp_url %}
+                      <div style="font-size: 12px; margin-top: 2px;">
+                        <a href="{{ lead.whatsapp_url }}"
+                           target="_blank"
+                           class="table-link"
+                           style="color: #15803d; font-weight: 600;"
+                           onclick="event.stopPropagation()">
+                          💬 WhatsApp
+                        </a>
+                      </div>
+                    {% endif %}
+                    {% if lead.facebook_url %}
+                      <div style="font-size: 12px; margin-top: 2px;">
+                        <a href="{{ lead.facebook_url | external_url }}"
+                           target="_blank"
+                           rel="noopener noreferrer"
+                           class="table-link"
+                           style="color: #2563eb; font-weight: 600;"
+                           onclick="event.stopPropagation()">
+                          📘 Facebook
+                        </a>
+                      </div>
+                    {% endif %}
+                    {% if lead.dm_email or lead.generic_email %}
+                      <div style="font-size: 12px;">
+                        <a href="mailto:{{ lead.dm_email | default(lead.generic_email) }}"
+                           class="table-link"
+                           onclick="event.stopPropagation()">
+                          ✉️ {{ lead.dm_email | default(lead.generic_email) }}
+                        </a>
+                      </div>
+                    {% endif %}
+                    {% if not lead.clean_phone and not lead.dm_email and not lead.generic_email %}
+                      <span style="color: var(--text-muted); font-size: 12px;">No Direct Contact</span>
+                    {% endif %}
+                  </td>
+                  <td style="font-size: 12px; color: var(--text-secondary); max-width: 240px;">
+                    {% if lead.audit and lead.audit.flaw_labels and lead.audit.flaw_labels | length > 0 %}
+                      <span style="color: #991b1b; font-weight: 500;">🚩 {{ lead.audit.flaw_labels[0] }}</span>
+                      {% if lead.audit.flaw_labels | length > 1 %}
+                        <small style="color: var(--text-muted);"> (+{{ (lead.audit.flaw_labels | length) - 1 }} more)</small>
+                      {% endif %}
+                    {% else %}
+                      {{ lead.status_reason | default(lead.manual_notes | default('—')) }}
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            {% else %}
+              <tr>
+                <td colspan="8" style="text-align: center; padding: 48px; color: var(--text-muted);">
+                  No leads match this filter criteria.
+                </td>
+              </tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+
+    <!-- Footer Stats / Pagination info -->
+    <div style="padding: 14px 20px; border-top: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--text-muted);">
+      <span>Showing {{ leads | length }} of {{ total_count | default(0) }} leads in archive</span>
+      {% if total_count > leads | length %}
+        <span>Displaying first {{ leads | length }} results (use status tabs or search to narrow)</span>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Slide-Over Lead Drawer Inspector -->
+<div id="lead-drawer" class="drawer-overlay" onclick="handleDrawerBackdropClick(event)">
+  <div class="drawer-panel">
+    <div id="lead-drawer-content">
+      <div style="padding: 48px; text-align: center; color: var(--text-muted);">
+        <div style="font-size: 28px; margin-bottom: 8px;">⏳</div>
+        <div>Loading complete lead data...</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Drawer Client Script -->
+<script>
+  function openDrawer() {
+    const drawer = document.getElementById('lead-drawer');
+    if (drawer) {
+      drawer.classList.add('open');
+      document.body.style.overflow = 'hidden';
+    }
+  }
+
+  function closeDrawer() {
+    const drawer = document.getElementById('lead-drawer');
+    if (drawer) {
+      drawer.classList.remove('open');
+      document.body.style.overflow = '';
+    }
+  }
+
+  function handleDrawerBackdropClick(e) {
+    if (e.target.id === 'lead-drawer') {
+      closeDrawer();
+    }
+  }
+
+  function handleRowClick(e) {
+    // If user clicked a direct link or button inside the row, don't trigger the drawer
+    if (e.target.closest('a') || e.target.closest('button')) {
+      return;
+    }
+    openDrawer();
+  }
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+      closeDrawer();
+    }
+  });
+</script>
+{% endblock %}

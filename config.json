@@ -3,6 +3,14 @@
     "db_path": "data/lead_pipeline.db",
     "target_country": "US",
     "log_level": "INFO",
+    "country_prefix_map": {
+      "US": "+1",
+      "CA": "+1",
+      "IN": "+91",
+      "UK": "+44",
+      "GB": "+44",
+      "AU": "+61"
+    },
     "excluded_domains": [
       "facebook.com",
       "instagram.com",
@@ -34,8 +42,7 @@
         "clean_phone",
         "form_url",
         "facebook_url",
-        "instagram_url",
-        "whatsapp_url"
+        "instagram_url"
       ]
     },
     "ranking_weights": {
@@ -44,17 +51,15 @@
       "unclickable_phone": 2.0,
       "slow_load": 1.5,
       "server_delay": 1.5,
-      "high_ttfb": 1.5,
       "heavy_page": 1.0,
       "builder_bloat": 1.0,
       "thin_architecture": 1.5,
       "content_starved": 1.0,
       "zero_visual_proof": 1.5,
       "obstructive_sticky_header": 2.0,
-      "obstructive_header": 2.0,
       "zero_trust_anchors": 1.5,
       "bot_challenge_gated": 1.5,
-      "render_incomplete": 1.5,
+      "render_incomplete": 0.0,
       "no_website": 4.0,
       "has_email_bonus": 2.0,
       "has_mobile_phone_bonus": 1.5,
@@ -65,7 +70,7 @@
   "scraper_c1": {
     "browser_channel": "chrome",
     "headless": true,
-    "user_data_dir": "./data/chrome_lead_profile",
+    "user_data_dir": "data/chrome_lead_profile",
     "viewport": {
       "width": 1920,
       "height": 1080
@@ -89,7 +94,6 @@
     "scroll_delay_max_ms": 2800,
     "navigation_timeout_ms": 30000,
     "detail_pane_timeout_ms": 2500,
-    "scroll_amount_px": 450,
     "search_url_template": "https://www.google.com/maps/search/{query}?hl=en",
     "default_phone_prefix": "+1",
     "query_cooldown_min_ms": 2500,
@@ -128,11 +132,12 @@
     }
   },
   "auditor": {
-    "concurrency_limit": 5,
+    "concurrency_limit": 2,
     "headless_args": [
-      "--disable-gpu",
+      "--disable-blink-features=AutomationControlled",
       "--no-sandbox",
-      "--disable-dev-shm-usage"
+      "--disable-dev-shm-usage",
+      "--disable-gpu"
     ],
     "page_timeout_ms": 25000,
     "hydration_wait_ms": 4000,
@@ -167,26 +172,40 @@
       "enquiry@"
     ],
     "form_embed_domains": [
-      "form",
       "typeform",
       "hubspot",
+      "hsforms",
       "jotform",
+      "cognitoforms",
+      "gravityforms",
+      "wpforms",
+      "formstack",
+      "formspree",
+      "paperform",
+      "tally.so",
+      "fillout",
       "leadconnectorhq",
       "msgsndr",
       "calendly",
+      "acuityscheduling",
       "roofr",
       "jobnimbus",
       "acculynx",
       "housecallpro",
       "podium",
-      "wufoo"
+      "wufoo",
+      "docs.google.com/forms"
     ],
     "form_keywords": [
       "contact",
       "quote",
       "estimate",
       "schedule",
-      "book",
+      "book-now",
+      "book-online",
+      "book a",
+      "booking",
+      "appointment",
       "request",
       "get-started",
       "consultation",
@@ -216,6 +235,38 @@
       "domain.com",
       "yourdomain.com",
       "email.com"
+    ],
+    "trust_keywords": [
+      "insured",
+      "licensed",
+      "warranty",
+      "guarantee",
+      "certified",
+      "certifications",
+      "reviews",
+      "bbb",
+      "bonded",
+      "accredited",
+      "experience",
+      "quality",
+      "trusted",
+      "ratings",
+      "satisfaction",
+      "family-owned",
+      "locally-owned",
+      "years"
+    ],
+    "social_stop_tokens": [
+      "llc",
+      "inc",
+      "corp",
+      "co",
+      "ltd",
+      "the",
+      "and",
+      "services",
+      "group",
+      "company"
     ]
   }
 }

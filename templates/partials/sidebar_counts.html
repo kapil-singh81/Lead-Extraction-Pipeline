@@ -3,12 +3,20 @@
   <span class="stat-value">{{ stats.outreach_ready | default(0) }}</span>
 </div>
 <div class="stat-row">
-  <span class="stat-label"><span class="stat-dot missing"></span> Missing Info</span>
-  <span class="stat-value">{{ stats.missing_info | default(0) }}</span>
-</div>
-<div class="stat-row">
   <span class="stat-label"><span class="stat-dot contacted"></span> Contacted</span>
   <span class="stat-value">{{ stats.contacted | default(0) }}</span>
+</div>
+<div class="stat-row">
+  <span class="stat-label"><span class="stat-dot replied"></span> Replied</span>
+  <span class="stat-value">{{ stats.replied | default(0) }}</span>
+</div>
+<div class="stat-row">
+  <span class="stat-label"><span class="stat-dot deferred"></span> Deferred</span>
+  <span class="stat-value">{{ stats.deferred | default(0) }}</span>
+</div>
+<div class="stat-row">
+  <span class="stat-label"><span class="stat-dot missing"></span> Missing Info</span>
+  <span class="stat-value">{{ stats.missing_info | default(0) }}</span>
 </div>
 <div class="stat-row">
   <span class="stat-label"><span class="stat-dot disqualified"></span> Disqualified</span>

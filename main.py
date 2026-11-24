@@ -2,10 +2,13 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 import time
 
 from core import database, c1_scraper, auditor
+
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 if sys.platform == "win32":
     try:
@@ -70,6 +73,9 @@ async def run_pipeline(
     start_time = time.time()
     logging.info(f"=== Starting Lead Extraction Pipeline [Config: {config_path}] ===")
 
+    if not os.path.isabs(config_path) and not os.path.exists(config_path):
+        config_path = os.path.join(PROJECT_ROOT, config_path)
+
     if args is None:
         class DummyArgs:
             skip_scrape = False
@@ -78,6 +84,10 @@ async def run_pipeline(
 
     with open(config_path, "r", encoding="utf-8") as f:
         config = json.load(f)
+
+    log_level_name = config.get("app", {}).get("log_level", "INFO").upper()
+    log_level = getattr(logging, log_level_name, logging.INFO)
+    logging.getLogger().setLevel(log_level)
 
     db_path = config["app"]["db_path"]
     database.init_db(db_path)
@@ -92,57 +102,84 @@ async def run_pipeline(
         config["app"]["target_country"] = country_clean
         logging.info(f"[RUNTIME OVERRIDE] Target country set to: '{country_clean}'")
 
-        country_prefix_map = {
-            "US": "+1", "CA": "+1",
-            "IN": "+91",
-            "UK": "+44", "GB": "+44",
-            "AU": "+61",
-        }
+        country_prefix_map = config.get("app", {}).get("country_prefix_map", {"US": "+1"})
         if country_clean in country_prefix_map:
             config["scraper_c1"]["default_phone_prefix"] = country_prefix_map[country_clean]
             logging.info(f"[RUNTIME OVERRIDE] Phone prefix set to: '{country_prefix_map[country_clean]}'")
 
+    # Determine run_type accurately from CLI flags
+    if getattr(args, "skip_scrape", False) and getattr(args, "re_audit", False):
+        run_type = "re_audit"
+    elif getattr(args, "skip_scrape", False) and not getattr(args, "skip_audit", False):
+        run_type = "audit_only"
+    elif getattr(args, "skip_audit", False) and not getattr(args, "skip_scrape", False):
+        run_type = "scrape_only"
+    else:
+        run_type = "local_scrape"
+
     # Initialize batch run tracking
     active_query = query or (config.get("scraper_c1", {}).get("target_queries") or ["unknown"])[0]
     run_id = database.create_run(
-        run_type="local_scrape",
+        run_type=run_type,
         query=active_query,
         metadata={"country": config["app"]["target_country"], "db_path": db_path},
         db_path=db_path
     )
-    logging.info(f"Initialized Tracking Run #{run_id} in SQLite archive.")
+    logging.info(f"Initialized Tracking Run #{run_id} ({run_type}) in SQLite archive.")
 
+    before_run_stats = database.get_pipeline_stats(db_path=db_path)
     harvested_count = 0
-    # 1. Stage 1: Google Maps Extraction Engine
-    if not args.skip_scrape:
-        logging.info("--- Stage 1: Running Maps Harvester ---")
-        try:
+    pre_reaudit_count = 0
+    before_audit_new = 0
+    re_audit = getattr(args, "re_audit", False)
+
+    try:
+        # 1. Stage 1: Google Maps Extraction Engine
+        if not args.skip_scrape:
+            logging.info("--- Stage 1: Running Maps Harvester ---")
             harvested_count = await c1_scraper.run_maps_scraper(config, run_id=run_id)
             logging.info(f"Stage 1 Complete. Newly harvested leads: {harvested_count}")
-        except Exception as e:
-            logging.error(f"Fatal error in Stage 1 (Maps Scraper): {e}", exc_info=True)
-            return
-    else:
-        logging.info("Skipping Stage 1 (Scraping skipped by flag).")
+        else:
+            logging.info("Skipping Stage 1 (Scraping skipped by flag).")
 
-    # 2. Stage 2: Audit & Deterministic Classification Engine
-    if not args.skip_audit:
-        logging.info("--- Stage 2: Running Conversion & Quality Auditor ---")
-        try:
-            re_audit = getattr(args, "re_audit", False)
+        # 2. Stage 2: Audit & Deterministic Classification Engine
+        if not args.skip_audit:
+            if re_audit:
+                pre_reaudit_count = len(database.get_leads_for_reaudit(db_path=db_path))
+            else:
+                before_audit_new = database.get_pipeline_stats(db_path=db_path).get("new", 0)
+
+            logging.info("--- Stage 2: Running Conversion & Quality Auditor ---")
             await auditor.run_audit_pipeline(config, re_audit=re_audit)
             logging.info("Stage 2 Complete. All leads audited and classified.")
-        except Exception as e:
-            logging.error(f"Error in Stage 2 (Site Auditor): {e}", exc_info=True)
-    else:
-        logging.info("Skipping Stage 2 (Auditing skipped by flag).")
+        else:
+            logging.info("Skipping Stage 2 (Auditing skipped by flag).")
 
-    # Fetch stats and complete run record
-    stats = database.get_pipeline_stats(db_path=db_path)
-    ready_count = stats.get("outreach_ready", 0)
-    total_audited = stats.get("total", 0) - stats.get("new", 0)
-    database.complete_run(run_id, harvested=harvested_count, audited=total_audited, ready=ready_count, db_path=db_path)
+        # Fetch stats and complete run record
+        after_stats = database.get_pipeline_stats(db_path=db_path)
+        if args.skip_audit:
+            audited_this_run = 0
+        elif re_audit:
+            audited_this_run = pre_reaudit_count
+        else:
+            audited_this_run = max(0, before_audit_new - after_stats.get("new", 0))
 
+        ready_this_run = max(0, after_stats.get("outreach_ready", 0) - before_run_stats.get("outreach_ready", 0))
+
+        database.complete_run(
+            run_id,
+            harvested=harvested_count,
+            audited=audited_this_run,
+            ready=ready_this_run,
+            db_path=db_path
+        )
+    except (Exception, KeyboardInterrupt) as e:
+        err_msg = "Interrupted by user" if isinstance(e, KeyboardInterrupt) else str(e)
+        logging.error(f"Pipeline run #{run_id} failed: {err_msg}")
+        database.fail_run(run_id, error_msg=err_msg, db_path=db_path)
+        raise
+
+    stats = after_stats
     elapsed = round(time.time() - start_time, 2)
     logging.info(f"=== Pipeline Cycle Finished in {elapsed}s ===")
 
@@ -152,6 +189,8 @@ async def run_pipeline(
     print("=" * 60)
     print(f"  Total Stored Leads:     {stats.get('total', 0)}")
     print(f"  Outreach Ready:         {stats.get('outreach_ready', 0)}")
+    print(f"  Deferred:               {stats.get('deferred', 0)}")
+    print(f"  Replied:                {stats.get('replied', 0)}")
     print(f"  Missing Contact Info:   {stats.get('missing_info', 0)}")
     print(f"  Contacted:              {stats.get('contacted', 0)}")
     print(f"  Disqualified:           {stats.get('disqualified', 0)}")
@@ -165,9 +204,12 @@ async def run_pipeline(
 def main() -> None:
     """Entry point."""
     args = parse_arguments()
+    config_path = args.config
+    if not os.path.isabs(config_path) and not os.path.exists(config_path):
+        config_path = os.path.join(PROJECT_ROOT, config_path)
     try:
         asyncio.run(run_pipeline(
-            config_path=args.config,
+            config_path=config_path,
             query=args.query,
             country=args.country,
             args=args

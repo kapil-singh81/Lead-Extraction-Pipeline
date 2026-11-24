@@ -1,0 +1,145 @@
+{% set is_drawer = is_drawer | default(false) %}
+<!-- Inline Edit Panel (Shared between Card and Drawer) -->
+<div class="lead-inline-edit-box" id="{% if is_drawer %}drawer-edit-panel-{{ lead.id }}{% else %}edit-panel-{{ lead.id }}{% endif %}" style="display: none;{% if is_drawer %} margin-bottom: 20px;{% endif %}">
+  <div class="edit-box-header">
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <span style="font-size: 16px;">✏️</span>
+      <strong>Edit Business Record: {{ lead.business_name }}</strong>
+    </div>
+    <button type="button" class="btn-edit-close-top"
+      onclick="{% if is_drawer %}toggleDrawerEdit('{{ lead.id }}'){% else %}toggleLeadEdit('{{ lead.id }}'){% endif %}"
+      title="Close edit and return to lead inspection view">
+      ✕ Close Edit
+    </button>
+  </div>
+
+  <form hx-post="/api/leads/{{ lead.id }}/update"
+    hx-target="{% if is_drawer %}#lead-drawer-content{% else %}#lead-card-{{ lead.id }}{% endif %}"
+    hx-swap="{% if is_drawer %}innerHTML{% else %}outerHTML{% endif %}"
+    class="lead-edit-form">
+    {% if is_drawer %}
+    <input type="hidden" name="source" value="drawer">
+    {% endif %}
+
+    <div class="edit-form-grid">
+      <!-- 1. Company Information -->
+      <div class="edit-group-title">🏢 Company & Contact Details</div>
+
+      <div class="edit-field">
+        <label>Business Name</label>
+        <input type="text" name="business_name" value="{{ lead.business_name }}" required>
+      </div>
+      <div class="edit-field">
+        <label>Website URL (Optional)</label>
+        <input type="text" name="website_url"
+          value="{% if lead.website_url and lead.website_url != 'None' %}{{ lead.website_url }}{% endif %}"
+          placeholder="https://... (leave blank if none)">
+      </div>
+      <div class="edit-field">
+        <label>Phone Number (Optional)</label>
+        <input type="text" name="phone"
+          value="{% if lead.phone and lead.phone != 'None' %}{{ lead.phone }}{% endif %}"
+          placeholder="(214) 555-0100 (optional)">
+      </div>
+      <div class="edit-field">
+        <label>Carrier / Line Type</label>
+        <select name="line_type">
+          <option value="Local (US)" {% if lead.line_type=='Local (US)' %}selected{% endif %}>Local (US)</option>
+          <option value="Local" {% if lead.line_type=='Local' %}selected{% endif %}>Local</option>
+          <option value="Mobile" {% if lead.line_type=='Mobile' %}selected{% endif %}>Mobile (Cell)</option>
+          <option value="Landline" {% if lead.line_type=='Landline' %}selected{% endif %}>Landline</option>
+          <option value="VoIP" {% if lead.line_type=='VoIP' %}selected{% endif %}>VoIP</option>
+          <option value="Toll-Free" {% if lead.line_type=='Toll-Free' %}selected{% endif %}>Toll-Free</option>
+          <option value="Unknown" {% if lead.line_type=='Unknown' or not lead.line_type %}selected{% endif %}>Unknown</option>
+          {% if lead.line_type and lead.line_type not in ['Local (US)', 'Local', 'Mobile', 'Landline', 'VoIP', 'Toll-Free', 'Unknown'] %}
+          <option value="{{ lead.line_type }}" selected>{{ lead.line_type }}</option>
+          {% endif %}
+        </select>
+      </div>
+      <div class="edit-field">
+        <label>WhatsApp Link (Optional)</label>
+        <input type="text" name="whatsapp_url"
+          value="{% if lead.whatsapp_url and lead.whatsapp_url != 'None' %}{{ lead.whatsapp_url }}{% endif %}"
+          placeholder="https://wa.me/1... (optional)">
+      </div>
+      <div class="edit-field">
+        <label>City / Region (Optional)</label>
+        <input type="text" name="city" value="{% if lead.city and lead.city != 'None' %}{{ lead.city }}{% endif %}"
+          placeholder="Dallas TX (optional)">
+      </div>
+      <div class="edit-field">
+        <label>Niche / Category (Optional)</label>
+        <input type="text" name="niche"
+          value="{% if lead.niche and lead.niche != 'None' %}{{ lead.niche }}{% endif %}"
+          placeholder="commercial roofer (optional)">
+      </div>
+
+      <!-- 2. Decision Maker (Optional) -->
+      <div class="edit-group-title">👤 Decision Maker (Optional)</div>
+
+      <div class="edit-field">
+        <label>Decision Maker Name</label>
+        <input type="text" name="dm_name"
+          value="{% if lead.dm_name and lead.dm_name != 'None' %}{{ lead.dm_name }}{% endif %}"
+          placeholder="Owner / CEO / Estimator (optional)">
+      </div>
+      <div class="edit-field">
+        <label>Decision Maker Title</label>
+        <input type="text" name="dm_title"
+          value="{% if lead.dm_title and lead.dm_title != 'None' %}{{ lead.dm_title }}{% endif %}"
+          placeholder="e.g. Owner, Managing Director (optional)">
+      </div>
+      <div class="edit-field">
+        <label>Direct Email</label>
+        <input type="text" name="dm_email"
+          value="{% if lead.dm_email and lead.dm_email != 'None' %}{{ lead.dm_email }}{% endif %}"
+          placeholder="direct@domain.com (optional)">
+      </div>
+      <div class="edit-field">
+        <label>LinkedIn Profile</label>
+        <input type="text" name="dm_linkedin"
+          value="{% if lead.dm_linkedin and lead.dm_linkedin != 'None' %}{{ lead.dm_linkedin }}{% endif %}"
+          placeholder="https://linkedin.com/in/... (optional)">
+      </div>
+      <div class="edit-field">
+        <label>General Email</label>
+        <input type="text" name="generic_email"
+          value="{% if lead.generic_email and lead.generic_email != 'None' %}{{ lead.generic_email }}{% endif %}"
+          placeholder="info@domain.com (optional)">
+      </div>
+
+      <!-- 3. Pipeline & Notes -->
+      <div class="edit-group-title">⚙️ Pipeline Status & Research Notes</div>
+
+      <div class="edit-field">
+        <label>Pipeline Status</label>
+        <select name="status">
+          <option value="new" {% if lead.status=='new' %}selected{% endif %}>New (Pending Audit)</option>
+          <option value="outreach_ready" {% if lead.status=='outreach_ready' %}selected{% endif %}>Outreach Ready</option>
+          <option value="contacted" {% if lead.status=='contacted' %}selected{% endif %}>Contacted</option>
+          <option value="replied" {% if lead.status=='replied' %}selected{% endif %}>Replied</option>
+          <option value="won" {% if lead.status=='won' %}selected{% endif %}>Won</option>
+          <option value="lost" {% if lead.status=='lost' %}selected{% endif %}>Lost</option>
+          <option value="missing_info" {% if lead.status=='missing_info' %}selected{% endif %}>Missing Info</option>
+          <option value="deferred" {% if lead.status=='deferred' %}selected{% endif %}>Deferred</option>
+          <option value="disqualified" {% if lead.status=='disqualified' %}selected{% endif %}>Disqualified</option>
+        </select>
+      </div>
+      <div class="edit-field" style="grid-column: span 2;">
+        <label>Internal Research Notes</label>
+        <textarea name="manual_notes" rows="2"
+          placeholder="Add custom notes, context, or corrections...">{% if lead.manual_notes and lead.manual_notes != 'None' %}{{ lead.manual_notes }}{% endif %}</textarea>
+      </div>
+    </div>
+
+    <div class="edit-actions-row">
+      <button type="submit" class="btn-action btn-save-edit">
+        💾 Save Changes
+      </button>
+      <button type="button" class="btn-action btn-cancel-edit"
+        onclick="{% if is_drawer %}toggleDrawerEdit('{{ lead.id }}'){% else %}toggleLeadEdit('{{ lead.id }}'){% endif %}">
+        {% if is_drawer %}✕ Cancel & Return{% else %}✕ Cancel & Return to Card{% endif %}
+      </button>
+    </div>
+  </form>
+</div>

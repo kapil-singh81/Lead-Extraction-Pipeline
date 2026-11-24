@@ -4,6 +4,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from core.pitch_generator import (
     generate_pitches,
+    clean_city_name,
     clean_contractor_name,
     get_proof_asset,
     get_flaw_variants,
@@ -124,7 +125,7 @@ def test_fox_roofing_pitches():
     assert pitches["approaches"]["loss_aversion"]["text"].startswith("Leads are hitting")
 
     # Business effect inclusion
-    effect = "Most people hit back after 3 seconds and call the next listing on Google."
+    effect = "Most people hit back after 3 seconds and call the next listing."
     assert effect in pitches["approaches"]["loss_aversion"]["text"]
     assert effect in pitches["approaches"]["local_contrast"]["text"]
     assert effect in pitches["approaches"]["reputation_dissonance"]["text"]
@@ -177,7 +178,7 @@ def test_bare_roofing_pitches():
     assert "15-second screen recording" in pitches["approaches"]["loss_aversion"]["text"]
 
     # Business effect for server_delay
-    effect = "People assume the site is down and tap the next listing on Google."
+    effect = "People assume the site is down and tap the next listing."
     assert effect in pitches["approaches"]["loss_aversion"]["text"]
     assert effect in pitches["approaches"]["local_contrast"]["text"]
     assert effect in pitches["approaches"]["reputation_dissonance"]["text"]
@@ -423,6 +424,193 @@ def test_dead_domain_recommendation():
     assert clean_contractor_name(dead_lead["business_name"]) == "Dead Domain Roofing"
 
 
+def test_b12_clean_city_name():
+    assert clean_city_name("Dallas TX") == "Dallas"
+    assert clean_city_name("Austin, TX") == "Austin"
+    assert clean_city_name("San Antonio TX") == "San Antonio"
+    assert clean_city_name("Miami, FL") == "Miami"
+    assert clean_city_name("New York, NY") == "New York"
+    assert clean_city_name("") == ""
+    assert clean_city_name(None) == ""
+    assert clean_city_name("   ") == ""
+    assert clean_city_name("None") == ""
+
+
+def test_b12_clean_contractor_name_anchored():
+    # Preserves mid-name tokens like "Co" or "Inc"
+    assert clean_contractor_name("Apex Co Roofing") == "Apex Co Roofing"
+    assert clean_contractor_name("Premier Co Builders") == "Premier Co Builders"
+    # Strips trailing and chained legal suffixes
+    assert clean_contractor_name("Smith Roofing Co., L.L.C.") == "Smith Roofing"
+    assert clean_contractor_name("Smith Roofing Co., LLC") == "Smith Roofing"
+    assert clean_contractor_name("Superior One Roofing & Construction, Inc.") == "Superior One Roofing & Construction"
+    assert clean_contractor_name("Lone Star Roofing, Ltd.") == "Lone Star Roofing"
+
+
+def test_b12_empty_city_no_dallas_invention():
+    # Lead with city="" or city=None never outputs "Dallas" in any of the 8 pitches
+    lead_no_city = {
+        "id": 201,
+        "business_name": "Lone Star Shingle",
+        "city": "",
+        "niche": "roofing",
+        "clean_phone": "+1 512-555-0100",
+        "website_url": "https://lonestarshingle.com",
+        "audit": {"flaw_codes": ["slow_load"], "load_time_sec": 8.0}
+    }
+    pitches = generate_pitches(lead_no_city)
+    for k, app in pitches["approaches"].items():
+        assert "Dallas" not in app["text"], f"Found 'Dallas' in pitch {k} for lead with empty city"
+
+    lead_none_city = {
+        "id": 202,
+        "business_name": "Apex Commercial",
+        "city": None,
+        "niche": "commercial roofing",
+        "clean_phone": "+1 512-555-0100",
+        "website_url": None,
+        "audit": {"flaw_codes": ["no_website"]}
+    }
+    pitches_none = generate_pitches(lead_none_city)
+    for k, app in pitches_none["approaches"].items():
+        assert "Dallas" not in app["text"], f"Found 'Dallas' in pitch {k} for lead with None city"
+
+
+def test_b12_bare_roofing_dallas_city_tx_no_duplication():
+    # "Bare Roofing Dallas" with city="Dallas TX" never repeats "Dallas" and never prints "Dallas TX listings"
+    bare_tx_lead = {
+        "id": 203,
+        "business_name": "Bare Roofing Dallas",
+        "city": "Dallas TX",
+        "niche": "commercial roofer",
+        "rating": 4.9,
+        "review_count": 14,
+        "clean_phone": "+1 214-432-4464",
+        "website_url": "https://www.bareroofingtx.com/",
+        "audit": {"flaw_codes": ["server_delay"], "ttfb_ms": 3200}
+    }
+    pitches = generate_pitches(bare_tx_lead)
+    for k, app in pitches["approaches"].items():
+        assert "Dallas TX" not in app["text"], f"Found 'Dallas TX' in pitch {k}"
+        assert "Dallas commercial roofing" not in app["text"], f"Found duplicate 'Dallas' in {k}"
+        assert "Dallas listings" not in app["text"], f"Found 'Dallas listings' in {k}"
+    assert "commercial roofing listings" in pitches["approaches"]["naive_curiosity"]["text"]
+
+
+def test_b12_no_ai_weakeners_or_repetition_in_pitches():
+    # Zero occurrences of "actually", "really", "Mobile Slag", "on cellular data. People on cellular data",
+    # or "on Google. Most people hit back after 3 seconds and call the next listing on Google"
+    sample_leads = [
+        {
+            "business_name": "Apex Phone Test",
+            "city": "Plano",
+            "audit": {"flaw_codes": ["unclickable_phone"]},
+            "website_url": "https://apexphone.com"
+        },
+        {
+            "business_name": "Slow Site Test",
+            "city": "Frisco",
+            "audit": {"flaw_codes": ["slow_load"]},
+            "website_url": "https://slowsite.com"
+        },
+        {
+            "business_name": "Heavy Site Test",
+            "city": "Dallas",
+            "audit": {"flaw_codes": ["heavy_page"], "page_weight_mb": 6.2},
+            "website_url": "https://heavysite.com"
+        },
+        {
+            "business_name": "Server Delay Test",
+            "city": "Austin",
+            "audit": {"flaw_codes": ["server_delay"], "ttfb_ms": 2500},
+            "website_url": "https://delayedsite.com"
+        }
+    ]
+    for lead in sample_leads:
+        pitches = generate_pitches(lead)
+        # Check psychology meta
+        for k, app in pitches["approaches"].items():
+            assert "Mobile Slag" not in app.get("psychology", "")
+            low = app["text"].lower()
+            assert "actually" not in low, f"Found 'actually' in {lead['business_name']} {k}: {app['text']}"
+            assert "really slowly" not in low, f"Found 'really slowly' in {lead['business_name']} {k}: {app['text']}"
+            assert "on cellular data. people on cellular data" not in low
+            assert "on google. most people hit back after 3 seconds and call the next listing on google" not in low
+            assert "on google. people assume the site is down and tap the next listing on google" not in low
+
+
+def test_b12_toll_free_smart_recommendation():
+    # A lead with clean_phone="+18005551234", line_type="Toll-Free", and form_url="https://example.com/contact" recommends "gatekeeper" ("slot_4")
+    lead_toll_free = {
+        "business_name": "Toll Free National Roofing",
+        "clean_phone": "+1 800-555-1234",
+        "line_type": "Toll-Free",
+        "form_url": "https://example.com/contact",
+        "website_url": "https://example.com",
+        "audit": {"flaw_codes": ["broken_mobile"]}
+    }
+    pitches = generate_pitches(lead_toll_free)
+    assert pitches["recommended"] == "gatekeeper"
+    assert pitches["recommended_slot"] == "slot_4"
+
+    # Also test area code 888 without explicit line_type string
+    lead_888 = {
+        "business_name": "888 National Roofing",
+        "clean_phone": "+1 888-555-4321",
+        "generic_email": "info@888roofing.com",
+        "website_url": "https://888roofing.com",
+        "audit": {"flaw_codes": ["slow_load"]}
+    }
+    pitches_888 = generate_pitches(lead_888)
+    assert pitches_888["recommended"] == "gatekeeper"
+    assert pitches_888["recommended_slot"] == "slot_4"
+
+
+def test_b27_audit_json_auto_resolve_and_bot_challenge_manual_note():
+    import json
+    # Raw database lead with audit_json as a JSON string and no unpacked 'audit' key
+    raw_lead = {
+        "id": 99,
+        "business_name": "Apex Roofing",
+        "city": "Plano",
+        "niche": "commercial roofer",
+        "rating": 4.9,
+        "review_count": 50,
+        "clean_phone": "+1 214-555-9999",
+        "website_url": "https://apexroofing.com",
+        "audit_json": json.dumps({
+            "flaw_codes": ["slow_load"],
+            "flaw_labels": ["Slow Load (7.20s)"],
+            "load_time_sec": 7.2
+        })
+    }
+    pitches = generate_pitches(raw_lead)
+    assert pitches["needs_manual_note"] is False
+    assert "Apex Roofing" in pitches["approaches"]["naive_curiosity"]["text"]
+    assert pitches["approaches"]["naive_curiosity"]["word_count"] > 0
+    assert pitches["approaches"]["naive_curiosity"]["word_count"] <= 45
+
+    # Bot-challenge-gated leads must NOT claim visitors hit a security screen; require manual verification
+    bot_lead = {
+        "id": 100,
+        "business_name": "Apex Roofing",
+        "city": "Plano",
+        "niche": "commercial roofer",
+        "rating": 4.9,
+        "review_count": 50,
+        "clean_phone": "+1 214-555-9999",
+        "website_url": "https://apexroofing.com",
+        "audit_json": json.dumps({
+            "flaw_codes": ["bot_challenge_gated"],
+            "flaw_labels": ["Protected by Host Security / Bot Gate (Manual Verification Required)"]
+        })
+    }
+    bot_pitches = generate_pitches(bot_lead)
+    assert bot_pitches["needs_manual_note"] is True
+    for k, app in bot_pitches["approaches"].items():
+        assert app["text"] == "", f"Expected empty pitch for bot_challenge_gated approach {k}"
+
+
 if __name__ == "__main__":
     test_clean_contractor_name()
     test_get_proof_asset()
@@ -436,4 +624,10 @@ if __name__ == "__main__":
     test_apex_family_dental_pitches()
     test_carter_injury_law_pitches()
     test_preview_window_rules()
+    test_b12_clean_city_name()
+    test_b12_clean_contractor_name_anchored()
+    test_b12_empty_city_no_dallas_invention()
+    test_b12_bare_roofing_dallas_city_tx_no_duplication()
+    test_b12_no_ai_weakeners_or_repetition_in_pitches()
+    test_b12_toll_free_smart_recommendation()
     print("\nALL TEST CASES PASSED SUCCESSFULLY!")

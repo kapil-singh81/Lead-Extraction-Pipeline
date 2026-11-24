@@ -1,0 +1,57 @@
+{% set is_drawer = is_drawer | default(false) %}
+{% set pitch_prefix = ('drawer-' ~ lead.id) if is_drawer else (lead.id | string) %}
+<!-- Outreach Script Generator (Shared between Card and Drawer) -->
+{% if lead.pitches %}
+<input type="hidden" id="tracked-pitch-{{ pitch_prefix }}" name="pitch_type"
+  value="{{ lead.pitches.recommended | default('naive_curiosity') }}">
+<script type="application/json" id="pitches-data-{{ pitch_prefix }}">
+  {{ lead.pitches | tojson }}
+</script>
+<div class="pitch-cockpit-section" id="pitch-cockpit-{{ pitch_prefix }}">
+  <div class="pitch-header-row">
+    <div class="section-label" style="margin-bottom: 0;">
+      <span>🎯</span> Outreach Script Generator (Touch #1)
+    </div>
+    <span class="meta-tag under-45" id="pitch-word-count-{{ pitch_prefix }}">{{ lead.recommended_pitch.word_count | default(0) }} words • Zero Links</span>
+  </div>
+
+  <!-- 4 Swappable Slot Tabs with Individual ⇄ Swap Buttons -->
+  <div class="slot-tabs-container" id="slot-tabs-container-{{ pitch_prefix }}" role="tablist">
+    {% for slot_id, slot in lead.pitches.slots.items() %}
+    {% set is_rec_slot = (lead.pitches.recommended_slot == slot_id) %}
+    {% set is_alt_rec = (lead.pitches.recommended == slot.alt) %}
+    {% set active_variant = 'alt' if is_alt_rec else 'primary' %}
+    {% set active_label = slot.alt_label if is_alt_rec else slot.primary_label %}
+    <div class="slot-tab-btn {% if is_rec_slot %}active{% endif %}" id="tab-{{ pitch_prefix }}-{{ slot_id }}"
+      data-slot="{{ slot_id }}" data-active-variant="{{ active_variant }}"
+      onclick="handleSlotTabClick('{{ pitch_prefix }}', '{{ slot_id }}')">
+      <span class="slot-title" id="slot-title-{{ pitch_prefix }}-{{ slot_id }}">{{ active_label }}</span>
+      {% if is_rec_slot %}
+      <span class="badge-rec"
+        style="font-size: 9px; padding: 1px 4px; border-radius: 4px; background: rgba(37, 99, 235, 0.15); color: #2563eb; font-weight: 700; margin-left: 2px;">Rec</span>
+      {% endif %}
+      <button type="button" class="slot-swap-btn"
+        onclick="handleSlotSwapClick('{{ pitch_prefix }}', '{{ slot_id }}', event)"
+        title="Switch between {{ slot.primary_label }} and {{ slot.alt_label }}">
+        ⇄
+      </button>
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- Single Compact Message Box with Top-Right Mini Copy Button & Live Editable Textarea -->
+  {% if lead.pitches.needs_manual_note %}
+  <div style="font-size: 11.5px; color: var(--text-muted); margin-bottom: 6px;">ℹ️ No automated flaw detected — write a custom note below before sending.</div>
+  {% endif %}
+  <div class="message-preview-container">
+    <button type="button" class="btn-copy-mini" onclick="copyActivePitchToClipboard('{{ pitch_prefix }}', this)"
+      title="Copy pitch to clipboard">
+      <span>📋</span>
+    </button>
+    <textarea class="message-bubble message-textarea" id="pitch-textarea-{{ pitch_prefix }}" name="message_text"
+      data-lead-id="{{ pitch_prefix }}" data-digits="{{ lead.pitches.digits | default('') }}"
+      oninput="handleTextareaLiveInput('{{ pitch_prefix }}', this)"
+      placeholder="Type or customize your outreach message here...">{{ lead.recommended_pitch.text | default('') }}</textarea>
+  </div>
+</div>
+{% endif %}

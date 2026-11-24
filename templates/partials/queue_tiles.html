@@ -7,7 +7,7 @@
          data-index="{{ loop.index0 }}"
          data-name="{{ q_lead.business_name | lower }}"
          data-city="{{ q_lead.city | default('') | lower }}"
-         data-phone="{{ (q_lead.clean_phone | default(q_lead.phone) | default('')) | lower }}"
+         data-phone="{% if q_lead.clean_phone or q_lead.phone %}true{% else %}false{% endif %}"
          data-domain="{{ (q_lead.clean_domain | default(q_lead.website_url) | default('')) | lower }}"
          data-niche="{{ q_lead.niche | default('') | lower }}"
          data-rating="{{ q_lead.rating | default(0) }}"
@@ -18,7 +18,7 @@
          hx-get="/api/leads/{{ q_lead.id }}/card"
          hx-target="#queue-card-container"
          hx-swap="innerHTML"
-         onclick="setActiveTile(this, {{ loop.index0 }})">
+         onclick="setActiveTile(this)">
       
       <div class="tile-top-row">
         <div class="tile-title-box">

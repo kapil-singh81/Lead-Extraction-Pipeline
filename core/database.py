@@ -5,6 +5,7 @@ import os
 import re
 import sqlite3
 import sys
+import urllib.parse
 import uuid
 from typing import Optional, Dict, Any, List, Tuple
 
@@ -35,7 +36,14 @@ def get_connection(db_path: Optional[str] = None) -> sqlite3.Connection:
     """
     if not db_path:
         db_path = get_default_config().get("app", {}).get("db_path", "data/lead_pipeline.db")
-    resolved_db_path = os.path.join(PROJECT_ROOT, db_path) if not os.path.isabs(db_path) else db_path
+    db_path_str = str(db_path)
+    if db_path_str == ":memory:":
+        resolved_db_path = ":memory:"
+    else:
+        resolved_db_path = os.path.join(PROJECT_ROOT, db_path_str) if not os.path.isabs(db_path_str) else db_path_str
+        parent_dir = os.path.dirname(resolved_db_path)
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
     conn = sqlite3.connect(resolved_db_path, timeout=30.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
@@ -72,7 +80,7 @@ def init_db(db_path: Optional[str] = None) -> None:
                     leads_outreach_ready INTEGER DEFAULT 0,
                     started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     completed_at TIMESTAMP,
-                    status TEXT DEFAULT 'completed',
+                    status TEXT DEFAULT 'running',
                     metadata_json TEXT
                 );
             """)
@@ -104,6 +112,9 @@ def init_db(db_path: Optional[str] = None) -> None:
                     facebook_url TEXT,
                     instagram_url TEXT,
                     whatsapp_url TEXT,
+                    linkedin_url TEXT,
+                    twitter_url TEXT,
+                    youtube_url TEXT,
                     form_url TEXT,
                     dm_name TEXT,
                     dm_title TEXT,
@@ -162,14 +173,13 @@ def init_db(db_path: Optional[str] = None) -> None:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_outreach_sent_at ON outreach_log(sent_at);")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_phone_prefix_lookup ON phone_prefixes(npa, nxx);")
 
-            # Migration: ensure instagram_url and whatsapp_url exist in existing leads table
+            # Migration: ensure social columns exist in existing leads table
             try:
                 cursor.execute("PRAGMA table_info(leads);")
                 cols = {r["name"] for r in cursor.fetchall()}
-                if "instagram_url" not in cols:
-                    cursor.execute("ALTER TABLE leads ADD COLUMN instagram_url TEXT;")
-                if "whatsapp_url" not in cols:
-                    cursor.execute("ALTER TABLE leads ADD COLUMN whatsapp_url TEXT;")
+                for col in ("instagram_url", "whatsapp_url", "linkedin_url", "twitter_url", "youtube_url"):
+                    if col not in cols:
+                        cursor.execute(f"ALTER TABLE leads ADD COLUMN {col} TEXT;")
             except Exception:
                 pass
     finally:
@@ -198,7 +208,8 @@ def lead_exists(
     business_name: Optional[str] = None,
     city: Optional[str] = None,
     db_path: Optional[str] = None,
-    fuzzy_threshold: float = 0.88
+    fuzzy_threshold: float = 0.88,
+    excluded_domains: Optional[List[str]] = None
 ) -> bool:
     """
     Checks if a lead already exists in SQLite using place_id, clean_domain, clean_phone,
@@ -217,16 +228,21 @@ def lead_exists(
                 return True
 
         if clean_domain:
-            cfg = get_default_config()
-            excluded = set(cfg.get("app", {}).get("excluded_domains", []))
-            if clean_domain.lower() not in excluded:
+            if excluded_domains is None:
+                cfg = get_default_config()
+                excluded = set(cfg.get("app", {}).get("excluded_domains", []))
+            else:
+                excluded = set(excluded_domains)
+            if clean_domain.lower() not in {d.lower() for d in excluded}:
                 cursor.execute("SELECT 1 FROM leads WHERE clean_domain = ? LIMIT 1", (clean_domain,))
                 if cursor.fetchone():
                     return True
 
         if clean_phone and len(re.sub(r"\D", "", clean_phone)) >= 10:
             norm_phone = re.sub(r"\D", "", clean_phone)[-10:]
-            cursor.execute("SELECT 1 FROM leads WHERE clean_phone LIKE ? LIMIT 1", (f"%{norm_phone}%",))
+            candidates = list({clean_phone.strip(), norm_phone, f"1{norm_phone}", f"+1{norm_phone}"})
+            placeholders = ", ".join(["?"] * len(candidates))
+            cursor.execute(f"SELECT 1 FROM leads WHERE clean_phone IN ({placeholders}) LIMIT 1", candidates)
             if cursor.fetchone():
                 return True
 
@@ -250,10 +266,11 @@ def insert_lead(lead_data: Dict[str, Any], db_path: Optional[str] = None) -> int
     fields = [
         "run_id", "place_id", "business_name", "niche", "city", "country",
         "website_url", "clean_domain", "phone", "clean_phone", "line_type",
-        "facebook_url", "instagram_url", "whatsapp_url", "form_url", "dm_name", "dm_title", "dm_email",
+        "facebook_url", "instagram_url", "whatsapp_url", "linkedin_url", "twitter_url", "youtube_url",
+        "form_url", "dm_name", "dm_title", "dm_email",
         "dm_linkedin", "generic_email", "rating", "review_count",
         "review_snippet", "maps_url", "lead_origin", "search_query",
-        "status", "status_reason", "priority_score", "audit_json", "manual_notes"
+        "status", "status_reason", "priority_score", "audit_json", "manual_notes", "deferred_until"
     ]
 
     keys = [k for k in fields if k in lead_data]
@@ -331,7 +348,7 @@ def update_lead_audit(
             ]
             values = [status, status_reason, priority_score, audit_json_str]
 
-            for field in ("dm_name", "dm_title", "dm_email", "dm_linkedin", "generic_email", "facebook_url", "instagram_url", "whatsapp_url", "form_url", "line_type"):
+            for field in ("dm_name", "dm_title", "dm_email", "dm_linkedin", "generic_email", "facebook_url", "instagram_url", "whatsapp_url", "linkedin_url", "twitter_url", "youtube_url", "form_url", "line_type"):
                 if field in audit_data and audit_data[field] is not None:
                     updates.append(f"{field} = ?")
                     values.append(audit_data[field])
@@ -371,8 +388,14 @@ def get_daily_queue(daily_queue_size: int = 35, db_path: Optional[str] = None) -
         if remaining_quota > 0:
             cursor.execute("""
                 SELECT * FROM leads
-                WHERE status = 'outreach_ready'
-                  AND (deferred_until IS NULL OR deferred_until <= datetime('now', 'localtime'))
+                WHERE (
+                    status = 'outreach_ready'
+                    AND (deferred_until IS NULL OR deferred_until <= datetime('now'))
+                ) OR (
+                    status = 'deferred'
+                    AND deferred_until IS NOT NULL
+                    AND deferred_until <= datetime('now')
+                )
                 ORDER BY priority_score DESC
                 LIMIT ?
             """, (remaining_quota,))
@@ -429,55 +452,112 @@ def update_lead_fields(
     Safely updates arbitrary editable fields on a lead in the database.
     Allows correcting business name, phone, clean_phone, line_type, website_url,
     clean_domain, dm_name, dm_title, dm_email, dm_linkedin, generic_email,
-    city, niche, status, status_reason, manual_notes, rating, review_count, etc.
+    city, niche, status, status_reason, manual_notes, rating, review_count, audit_json, etc.
     """
     ALLOWED_FIELDS = {
         "business_name", "niche", "city", "country", "website_url", "clean_domain",
         "phone", "clean_phone", "line_type", "facebook_url", "instagram_url",
-        "whatsapp_url", "form_url", "dm_name", "dm_title", "dm_email",
-        "dm_linkedin", "generic_email", "rating", "review_count", "review_snippet",
-        "maps_url", "status", "status_reason", "manual_notes", "deferred_until"
+        "whatsapp_url", "linkedin_url", "twitter_url", "youtube_url", "form_url",
+        "dm_name", "dm_title", "dm_email", "dm_linkedin", "generic_email", "rating",
+        "review_count", "review_snippet", "maps_url", "status", "status_reason",
+        "manual_notes", "deferred_until", "audit_json"
     }
+
+    resolved: Dict[str, Any] = {}
+
+    for k, v in fields.items():
+        if k not in ALLOWED_FIELDS:
+            continue
+        if k in ("website_url", "clean_domain", "phone", "clean_phone", "audit_json"):
+            continue
+        resolved[k] = v
+
+    if "clean_domain" in fields and "website_url" not in fields:
+        cd_val = fields["clean_domain"]
+        resolved["clean_domain"] = str(cd_val).strip() if cd_val is not None else None
+
+    if "clean_phone" in fields and "phone" not in fields:
+        cp_val = fields["clean_phone"]
+        resolved["clean_phone"] = str(cp_val).strip() if cp_val is not None else None
+
+    if "website_url" in fields:
+        w_val = fields["website_url"]
+        if w_val and str(w_val).strip().lower() != "none":
+            norm_url = str(w_val).strip()
+            if not (norm_url.startswith("http://") or norm_url.startswith("https://")):
+                norm_url = f"https://{norm_url}"
+            parsed = urllib.parse.urlparse(norm_url)
+            netloc = parsed.netloc.lower()
+            if netloc.startswith("www."):
+                netloc = netloc[4:]
+            clean_dom = netloc.split(":")[0]
+            resolved["website_url"] = norm_url
+            resolved["clean_domain"] = clean_dom
+        else:
+            resolved["website_url"] = None
+            explicit_cd = fields.get("clean_domain")
+            if explicit_cd is not None and str(explicit_cd).strip() and str(explicit_cd).strip().lower() != "none":
+                resolved["clean_domain"] = str(explicit_cd).strip()
+            else:
+                resolved["clean_domain"] = None
+
+    if "phone" in fields:
+        p_val = fields["phone"]
+        if p_val and str(p_val).strip().lower() != "none":
+            p_str = str(p_val).strip()
+            resolved["phone"] = p_str
+            explicit_cp = fields.get("clean_phone")
+            has_explicit_cp = explicit_cp is not None and str(explicit_cp).strip() != "" and str(explicit_cp).strip().lower() != "none"
+            if not has_explicit_cp:
+                digits = re.sub(r"\D", "", p_str)
+                if len(digits) == 10:
+                    clean_p = f"+1{digits}"
+                elif len(digits) == 11 and digits.startswith("1"):
+                    clean_p = f"+{digits}"
+                else:
+                    clean_p = p_str
+                resolved["clean_phone"] = clean_p
+            else:
+                resolved["clean_phone"] = str(explicit_cp).strip()
+        else:
+            resolved["phone"] = None
+            if "clean_phone" in fields:
+                explicit_cp = fields.get("clean_phone")
+                resolved["clean_phone"] = str(explicit_cp).strip() if explicit_cp is not None else None
+
+    if "audit_json" in fields:
+        a_val = fields["audit_json"]
+        if a_val is None:
+            resolved["audit_json"] = None
+        elif isinstance(a_val, dict):
+            resolved["audit_json"] = json.dumps(a_val)
+        elif isinstance(a_val, str):
+            s_val = a_val.strip()
+            if not s_val:
+                resolved["audit_json"] = None
+            else:
+                try:
+                    json.loads(s_val)
+                except Exception as e:
+                    raise ValueError(f"Invalid JSON for audit_json: {e}") from e
+                resolved["audit_json"] = s_val
+        else:
+            raise ValueError(f"audit_json must be dict, valid JSON string, or None; got {type(a_val)}")
+
+    if not resolved:
+        return get_lead_by_id(lead_id, db_path=db_path)
+
+    updates = [f"{col} = ?" for col in resolved]
+    values = list(resolved.values())
+    updates.append("updated_at = CURRENT_TIMESTAMP")
+    sql = f"UPDATE leads SET {', '.join(updates)} WHERE id = ?"
+    values.append(lead_id)
 
     conn = get_connection(db_path)
     try:
         with conn:
             cursor = conn.cursor()
-            updates = []
-            values = []
-
-            for k, v in fields.items():
-                if k in ALLOWED_FIELDS:
-                    updates.append(f"{k} = ?")
-                    # Clean up clean_domain and ensure scheme if website_url is updated
-                    if k == "website_url" and v:
-                        v_str = str(v).strip()
-                        if v_str.lower() != "none" and not (v_str.startswith("http://") or v_str.startswith("https://")):
-                            v = f"https://{v_str}"
-                        clean_dom = re.sub(r"^https?://(www\.)?", "", str(v).strip(), flags=re.IGNORECASE).rstrip("/").lower()
-                        updates.append("clean_domain = ?")
-                        values.append(clean_dom)
-                    # Clean up clean_phone if phone is updated
-                    if k == "phone" and v:
-                        digits = re.sub(r"\D", "", str(v))
-                        if len(digits) == 10:
-                            clean_p = f"+1{digits}"
-                        elif len(digits) == 11 and digits.startswith("1"):
-                            clean_p = f"+{digits}"
-                        else:
-                            clean_p = str(v).strip()
-                        updates.append("clean_phone = ?")
-                        values.append(clean_p)
-                    values.append(v)
-
-            if not updates:
-                return get_lead_by_id(lead_id, db_path=db_path)
-
-            updates.append("updated_at = CURRENT_TIMESTAMP")
-            sql = f"UPDATE leads SET {', '.join(updates)} WHERE id = ?"
-            values.append(lead_id)
             cursor.execute(sql, values)
-
         return get_lead_by_id(lead_id, db_path=db_path)
     finally:
         conn.close()
@@ -490,6 +570,7 @@ def log_outreach(
     message_sent: Optional[str] = None,
     notes: Optional[str] = None,
     next_followup_at: Optional[str] = None,
+    dedup_window_minutes: int = 3,
     db_path: Optional[str] = None
 ) -> int:
     """Logs an outreach interaction and marks lead as 'contacted', preventing duplicate entries."""
@@ -497,16 +578,15 @@ def log_outreach(
     try:
         with conn:
             cursor = conn.cursor()
-            # Deduplication: check if an entry with same lead_id, channel, and message exists recently
+            # Deduplication: look up the most recent row for the same (lead_id, channel) strictly within the burst window
             cursor.execute("""
                 SELECT id FROM outreach_log
-                WHERE lead_id = ? AND LOWER(channel) = LOWER(?)
-                  AND (
-                    (message_sent = ? OR (message_sent IS NULL AND ? IS NULL))
-                    OR sent_at >= datetime('now', '-2 minutes')
-                  )
-                ORDER BY id DESC LIMIT 1
-            """, (lead_id, channel, message_sent, message_sent))
+                WHERE lead_id = ?
+                  AND LOWER(channel) = LOWER(?)
+                  AND sent_at >= datetime('now', ?)
+                ORDER BY sent_at DESC, id DESC
+                LIMIT 1
+            """, (lead_id, channel, f"-{int(dedup_window_minutes)} minutes"))
             existing = cursor.fetchone()
             if existing:
                 log_id = existing["id"]
@@ -515,9 +595,10 @@ def log_outreach(
                     SET outcome = ?,
                         message_sent = COALESCE(?, message_sent),
                         notes = COALESCE(?, notes),
+                        next_followup_at = COALESCE(?, next_followup_at),
                         sent_at = CURRENT_TIMESTAMP
                     WHERE id = ?
-                """, (outcome, message_sent, notes, log_id))
+                """, (outcome, message_sent, notes, next_followup_at, log_id))
             else:
                 cursor.execute("""
                     INSERT INTO outreach_log (lead_id, channel, message_sent, outcome, next_followup_at, notes)
@@ -572,10 +653,37 @@ def create_run(run_type: str = "local_scrape", query: Optional[str] = None, meta
             run_uuid = uuid.uuid4().hex
             meta_str = json.dumps(metadata or {})
             cursor.execute("""
-                INSERT INTO runs (run_uuid, run_type, query, metadata_json)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO runs (run_uuid, run_type, query, metadata_json, status)
+                VALUES (?, ?, ?, ?, 'running')
             """, (run_uuid, run_type, query, meta_str))
             return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def fail_run(run_id: int, error_msg: Optional[str] = None, db_path: Optional[str] = None) -> None:
+    """Marks a tracking run as failed, records completion timestamp, and attaches error metadata."""
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT metadata_json FROM runs WHERE id = ?", (run_id,))
+            row = cursor.fetchone()
+            meta = {}
+            if row and row["metadata_json"]:
+                try:
+                    meta = json.loads(row["metadata_json"])
+                except Exception:
+                    meta = {}
+            if error_msg:
+                meta["error"] = str(error_msg)[:500]
+            cursor.execute("""
+                UPDATE runs
+                SET status = 'failed',
+                    completed_at = CURRENT_TIMESTAMP,
+                    metadata_json = ?
+                WHERE id = ?
+            """, (json.dumps(meta), run_id))
     finally:
         conn.close()
 
@@ -612,7 +720,7 @@ def get_lead_by_id(lead_id: int, db_path: Optional[str] = None) -> Optional[Dict
 
 
 def get_lead_outreach_history(lead_id: int, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Retrieves all outreach interactions for a specific lead, deduplicating identical records."""
+    """Retrieves all outreach interactions for a specific lead, ordered newest first."""
     conn = get_connection(db_path)
     try:
         cursor = conn.cursor()
@@ -620,7 +728,6 @@ def get_lead_outreach_history(lead_id: int, db_path: Optional[str] = None) -> Li
             SELECT id, lead_id, channel, message_sent, outcome, sent_at, next_followup_at, notes
             FROM outreach_log
             WHERE lead_id = ?
-            GROUP BY channel, outcome, COALESCE(message_sent, ''), COALESCE(notes, ''), substr(sent_at, 1, 16)
             ORDER BY sent_at DESC, id DESC
         """, (lead_id,))
         return [dict(row) for row in cursor.fetchall()]
@@ -779,7 +886,7 @@ def get_contacted_leads_with_history(
         query_leads = f"""
             SELECT 
                 l.*,
-                COALESCE(o.channel, 'whatsapp') as last_channel,
+                COALESCE(o.channel, 'unknown') as last_channel,
                 COALESCE(o.sent_at, l.updated_at) as contacted_at,
                 o.message_sent,
                 o.notes as contact_notes,
@@ -811,7 +918,7 @@ def get_contacted_stats(db_path: Optional[str] = None) -> Dict[str, Any]:
         total_contacted = cursor.fetchone()["total"]
 
         cursor.execute("""
-            SELECT LOWER(COALESCE(o.channel, 'whatsapp')) as channel, COUNT(*) as count
+            SELECT LOWER(COALESCE(o.channel, 'other')) as channel, COUNT(*) as count
             FROM leads l
             LEFT JOIN (
                 SELECT lead_id, channel,
@@ -819,9 +926,17 @@ def get_contacted_stats(db_path: Optional[str] = None) -> Dict[str, Any]:
                 FROM outreach_log
             ) o ON l.id = o.lead_id AND o.rn = 1
             WHERE l.status = 'contacted'
-            GROUP BY LOWER(COALESCE(o.channel, 'whatsapp'));
+            GROUP BY LOWER(COALESCE(o.channel, 'other'));
         """)
         channel_counts = {row["channel"]: row["count"] for row in cursor.fetchall()}
+
+        named_sum = (
+            channel_counts.get("whatsapp", 0) +
+            channel_counts.get("phone", 0) +
+            channel_counts.get("email", 0) +
+            channel_counts.get("form", 0) +
+            channel_counts.get("facebook", 0)
+        )
 
         return {
             "total": total_contacted,
@@ -830,7 +945,7 @@ def get_contacted_stats(db_path: Optional[str] = None) -> Dict[str, Any]:
             "email": channel_counts.get("email", 0),
             "form": channel_counts.get("form", 0),
             "facebook": channel_counts.get("facebook", 0),
-            "other": max(0, total_contacted - sum(channel_counts.values()))
+            "other": max(0, total_contacted - named_sum)
         }
     finally:
         conn.close()

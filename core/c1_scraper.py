@@ -19,6 +19,77 @@ from core import database
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
+US_STATES = {
+    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+    "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+    "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+    "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+    "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
+    "DC"
+}
+
+TWO_WORD_CITY_PREFIXES = {
+    "new", "san", "los", "las", "fort", "ft", "st", "saint", "santa",
+    "el", "palm", "west", "east", "north", "south", "salt", "baton",
+    "kansas", "oklahoma", "virginia", "colorado", "grand", "little",
+    "cedar", "sioux", "corpus", "long", "chula", "costa"
+}
+
+US_PHONE_REGEX = re.compile(r"(?:\+?1[\s.-]?)?(?:\(\d{3}\)|\b\d{3})[\s.-]\d{3}[\s.-]\d{4}\b")
+INTL_PHONE_REGEX = re.compile(r"\+\d{1,3}[\s.-]?\d{2,5}[\s.-]?\d{3,5}(?:[\s.-]?\d{3,4})?\b")
+
+
+def extract_review_count_from_text(text: str) -> int:
+    """
+    Extracts review count from text while preventing US phone area codes like (214)
+    from being misidentified as review counts.
+    """
+    if not text:
+        return 0
+
+    # 1. Explicit review word match: e.g. "1,240 reviews", "5 review"
+    w_m = re.search(r"\b([0-9,]+)\s*reviews?\b", text, flags=re.IGNORECASE)
+    if w_m:
+        try:
+            return int(w_m.group(1).replace(",", ""))
+        except ValueError:
+            pass
+
+    # 2. Rating-adjacent parenthesized count: e.g. "4.9(75)", "5 (120)", "3.8 (1,500)"
+    r_m = re.search(r"(?<!\+)\b[1-5](?:\.\d)?\s*\(([0-9,]+)\)(?!\s*\d{3}[\s.-]\d{4})", text)
+    if r_m:
+        try:
+            return int(r_m.group(1).replace(",", ""))
+        except ValueError:
+            pass
+
+    # 3. Strip formatted US/NANP phone numbers from a working copy of text
+    stripped_text = re.sub(r"(?:\+?1[\s.-]?)?\(\d{3}\)\s*\d{3}[\s.-]\d{4}", " ", text)
+    p_m = re.search(r"\(([0-9,]+)\)(?!\s*\d{3}[\s.-]\d{4})", stripped_text)
+    if p_m:
+        try:
+            return int(p_m.group(1).replace(",", ""))
+        except ValueError:
+            pass
+
+    return 0
+
+
+def extract_phone_from_text(text: str) -> Optional[str]:
+    """
+    Extracts a formatted phone number from text while strictly ignoring 9-digit ZIP+4
+    strings (e.g. '75201-1234') and street numbers.
+    """
+    if not text:
+        return None
+    m = US_PHONE_REGEX.search(text)
+    if m:
+        return m.group(0).strip()
+    m2 = INTL_PHONE_REGEX.search(text)
+    if m2:
+        return m2.group(0).strip()
+    return None
+
 
 def clean_website_url(raw_url, excluded_domains=None):
     """Strips Google redirect wrappers and extracts canonical URL and root domain."""
@@ -80,19 +151,57 @@ def clean_phone_number(raw_phone, default_prefix="+1"):
     return cleaned
 
 
-def parse_niche_and_city(query, default_country="US"):
+def parse_niche_and_city(query: str, default_country: str = "US") -> Tuple[str, str]:
     """Parses niche and city from query strings like 'commercial roofer Dallas TX'."""
     query = query.strip()
+    if not query:
+        return "", ""
+
+    # 1. Explicit ' in ' separator
     if " in " in query.lower():
         parts = re.split(r"\s+in\s+", query, flags=re.IGNORECASE, maxsplit=1)
         return parts[0].strip(), parts[1].strip()
 
-    m = re.match(r"^(.*?)\s+([A-Z][a-zA-Z\s.-]+(?:\s+[A-Za-z]{2})?)$", query)
-    if m:
-        niche = m.group(1).strip()
-        city = m.group(2).strip()
-        if niche and city:
+    words = query.split()
+    if len(words) < 2:
+        return query, ""
+
+    # 2. Trailing 2-letter US state code
+    if len(words[-1]) == 2 and words[-1].upper() in US_STATES:
+        pre_words = words[:-1]
+        split_idx = -1
+        # Check if mixed-case: lowercase prefix words followed by Title Case city words
+        for idx in range(1, len(pre_words)):
+            if all(w[0].islower() for w in pre_words[:idx]) and all(w[0].isupper() for w in pre_words[idx:]):
+                split_idx = idx
+                break
+
+        if split_idx != -1:
+            niche = " ".join(words[:split_idx])
+            city = " ".join(words[split_idx:])
             return niche, city
+        else:
+            # All Title Case or all lowercase
+            if len(words) >= 4 and words[-3].lower() in TWO_WORD_CITY_PREFIXES:
+                niche = " ".join(words[:-3])
+                city = " ".join(words[-3:])
+                return niche, city
+            else:
+                niche = " ".join(words[:-2])
+                city = " ".join(words[-2:])
+                return niche, city
+
+    # 3. No trailing state, mixed-case (e.g. 'dentist Austin', 'personal injury lawyer San Antonio')
+    split_idx = -1
+    for idx in range(1, len(words)):
+        if all(w[0].islower() for w in words[:idx]) and all(w[0].isupper() for w in words[idx:]):
+            split_idx = idx
+            break
+
+    if split_idx != -1:
+        niche = " ".join(words[:split_idx])
+        city = " ".join(words[split_idx:])
+        return niche, city
 
     return query, ""
 
@@ -192,30 +301,29 @@ async def extract_single_result(page: Page, query: str, config: dict, run_id: Op
     # Fallback 1: Extract from page text regex if still 0
     if review_count == 0:
         body_text = await page.inner_text("body")
-        paren_m = re.search(r"\(([0-9,]+)\)", body_text)
-        if paren_m:
-            review_count = int(paren_m.group(1).replace(",", ""))
-        else:
-            w_m = re.search(r"([0-9,]+)\s*reviews?", body_text, re.IGNORECASE)
-            if w_m:
-                review_count = int(w_m.group(1).replace(",", ""))
+        review_count = extract_review_count_from_text(body_text)
 
     # Fallback 2: Mobile header probe if rating > 0 but review_count is 0 (bypasses Google Maps desktop guest view limitation)
     if rating > 0 and review_count == 0 and maps_url and "/maps/place/" in maps_url:
+        probe_page = None
         try:
             probe_page = await page.context.new_page()
+            mobile_ua = config.get("auditor", {}).get(
+                "mobile_user_agent",
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1"
+            )
             await probe_page.set_extra_http_headers({
-                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1"
+                "User-Agent": mobile_ua
             })
             await probe_page.goto(maps_url, wait_until="domcontentloaded", timeout=7000)
             await probe_page.wait_for_timeout(1000)
             pr_text = await probe_page.inner_text("body")
-            pr_m = re.search(r"\(([0-9,]+)\)", pr_text)
-            if pr_m:
-                review_count = int(pr_m.group(1).replace(",", ""))
-            await probe_page.close()
+            review_count = extract_review_count_from_text(pr_text)
         except Exception:
             pass
+        finally:
+            if probe_page and not probe_page.is_closed():
+                await probe_page.close()
 
     # Ensure review count accurately accounts for actual Google profile total (Google Maps feed text omits ~3 rating-only reviews)
     if review_count > 0:
@@ -328,7 +436,6 @@ async def scrape_single_query(page: Page, query: str, config: dict, geo_coord: O
     db_path = config["app"]["db_path"]
     target_country = config["app"]["target_country"]
     lead_origin = scraper_cfg.get("lead_origin", "c1_google_maps")
-    scroll_px = scraper_cfg.get("scroll_amount_px", 450)
     default_prefix = scraper_cfg.get("default_phone_prefix", "+1")
     excluded_domains = config.get("app", {}).get("excluded_domains", [])
     niche, city = parse_niche_and_city(query, target_country)
@@ -452,13 +559,7 @@ async def scrape_single_query(page: Page, query: str, config: dict, geo_coord: O
                 # Fallback on feed card text for (26) or 26 reviews
                 if review_count == 0:
                     c_txt = await card.inner_text()
-                    c_paren = re.search(r"\(([0-9,]+)\)", c_txt)
-                    if c_paren:
-                        review_count = int(c_paren.group(1).replace(",", ""))
-                    else:
-                        c_word = re.search(r"([0-9,]+)\s*reviews?", c_txt, re.IGNORECASE)
-                        if c_word:
-                            review_count = int(c_word.group(1).replace(",", ""))
+                    review_count = extract_review_count_from_text(c_txt)
 
                 # Tier 1: Extract Website & Phone directly from feed card (if present)
                 website_url = None
@@ -473,13 +574,17 @@ async def scrape_single_query(page: Page, query: str, config: dict, geo_coord: O
                 phone_btn = card.locator(selectors["phone_button"]).first
                 if await phone_btn.count() > 0:
                     phone = (await phone_btn.inner_text()).strip() or await phone_btn.get_attribute("data-tooltip")
+                if not phone and selectors.get("phone_button_aria"):
+                    aria_btn = card.locator(selectors["phone_button_aria"]).first
+                    if await aria_btn.count() > 0:
+                        phone = (await aria_btn.inner_text()).strip() or await aria_btn.get_attribute("aria-label")
+                        if phone and "phone:" in phone.lower():
+                            phone = re.sub(r"(?i)phone:\s*", "", phone).strip()
                 if not phone:
                     card_text = await card.inner_text()
-                    phone_match = re.search(r"(\+?[0-9\s\-\(\)]{8,18}[0-9])", card_text)
-                    if phone_match:
-                        phone = phone_match.group(1)
+                    phone = extract_phone_from_text(card_text)
 
-                snippet_elem = card.locator("span.wiI7pd, div.W4Efsd > span").first
+                snippet_elem = card.locator("span.wiI7pd").first
                 if await snippet_elem.count() > 0:
                     try:
                         raw_snippet = (await snippet_elem.inner_text()).strip()
@@ -558,13 +663,7 @@ async def scrape_single_query(page: Page, query: str, config: dict, geo_coord: O
                                             if rm:
                                                 rating = float(rm.group(1))
                                     if review_count == 0:
-                                        m_p = re.search(r"\(([0-9,]+)\)", p_txt)
-                                        if m_p:
-                                            review_count = int(m_p.group(1).replace(",", ""))
-                                        else:
-                                            m_w = re.search(r"([0-9,]+)\s*reviews?", p_txt, re.IGNORECASE)
-                                            if m_w:
-                                                review_count = int(m_w.group(1).replace(",", ""))
+                                        review_count = extract_review_count_from_text(p_txt)
 
                             if not website_url:
                                 authority_sel = selectors.get("detail_pane_website", "a[data-item-id='authority']")
@@ -605,20 +704,25 @@ async def scrape_single_query(page: Page, query: str, config: dict, geo_coord: O
 
                 # Tier 3: Mobile header probe if rating > 0 but review_count is still 0
                 if rating > 0 and review_count == 0 and maps_url and "/maps/place/" in maps_url:
+                    probe_page = None
                     try:
                         probe_page = await page.context.new_page()
+                        mobile_ua = config.get("auditor", {}).get(
+                            "mobile_user_agent",
+                            "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1"
+                        )
                         await probe_page.set_extra_http_headers({
-                            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1"
+                            "User-Agent": mobile_ua
                         })
                         await probe_page.goto(maps_url, wait_until="domcontentloaded", timeout=7000)
                         await probe_page.wait_for_timeout(1000)
                         pr_text = await probe_page.inner_text("body")
-                        pr_m = re.search(r"\(([0-9,]+)\)", pr_text)
-                        if pr_m:
-                            review_count = int(pr_m.group(1).replace(",", ""))
-                        await probe_page.close()
+                        review_count = extract_review_count_from_text(pr_text)
                     except Exception:
                         pass
+                    finally:
+                        if probe_page and not probe_page.is_closed():
+                            await probe_page.close()
 
                 clean_phone = clean_phone_number(phone, default_prefix)
                 niche, city = parse_niche_and_city(query, target_country)
@@ -669,7 +773,11 @@ async def scrape_single_query(page: Page, query: str, config: dict, geo_coord: O
                 continue
 
         # Check for Google's "End of list" marker
-        end_marker = page.locator("div[role='feed'] span.HlvSq, div[role='feed'] p.fontBodyMedium:has-text('end of the list'), span.HlvSq").first
+        end_marker_sel = selectors.get(
+            "end_of_list_marker",
+            "div[role='feed'] span.HlvSq, div[role='feed'] p.fontBodyMedium:has-text('end of the list'), span.HlvSq"
+        )
+        end_marker = page.locator(end_marker_sel).first
         if await end_marker.count() > 0 and await end_marker.is_visible():
             logging.info(f"Reached end of list for query: '{query}'")
             break
@@ -707,10 +815,17 @@ async def run_maps_scraper(config, run_id: Optional[int] = None) -> int:
     scraper_cfg = config["scraper_c1"]
     total_harvested = 0
 
+    raw_user_data_dir = scraper_cfg.get("user_data_dir", "data/chrome_lead_profile")
+    if not os.path.isabs(raw_user_data_dir):
+        resolved_user_data_dir = os.path.join(PROJECT_ROOT, raw_user_data_dir)
+    else:
+        resolved_user_data_dir = raw_user_data_dir
+    os.makedirs(resolved_user_data_dir, exist_ok=True)
+
     async with async_playwright() as p:
         logging.info("Launching Chrome Persistent Context for Maps extraction...")
         context = await p.chromium.launch_persistent_context(
-            user_data_dir=scraper_cfg["user_data_dir"],
+            user_data_dir=resolved_user_data_dir,
             channel=scraper_cfg.get("browser_channel", "chrome"),
             headless=scraper_cfg.get("headless", False),
             args=scraper_cfg.get("launch_args", []),

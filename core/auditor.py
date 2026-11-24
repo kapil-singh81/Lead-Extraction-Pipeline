@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -130,10 +131,14 @@ def extract_emails(
     return dm_emails, generic_emails
 
 
+DEFAULT_SOCIAL_STOP_TOKENS = ["llc", "inc", "corp", "co", "ltd", "the", "and", "services", "group", "company"]
+
+
 def extract_social_links(
     links: List[str],
     business_name: Optional[str] = None,
-    clean_domain: Optional[str] = None
+    clean_domain: Optional[str] = None,
+    stop_tokens: Optional[List[str]] = None
 ) -> Dict[str, Optional[str]]:
     """
     Extracts clean, verified social profile URLs from anchor links or JSON-LD sameAs.
@@ -163,7 +168,7 @@ def extract_social_links(
         if netloc in {"facebook.com", "fb.com", "fb.me"} or netloc.endswith((".facebook.com", ".fb.com")):
             if not any(x in url_lower for x in ["sharer", "share.php", "/dialog/", "plugins/like", "plugins/share", "/tr/", "/help/", "/policies"]):
                 path = parsed.path.rstrip("/")
-                if len(path.strip("/")) > 1 and not path.startswith(("/p/", "/share")):
+                if len(path.strip("/")) > 1 and not path.startswith("/share"):
                     # Preserve profile.php?id=...
                     if path.endswith("profile.php") and parsed.query:
                         clean = f"{parsed.scheme or 'https'}://{parsed.netloc}{path}?{parsed.query}"
@@ -202,13 +207,21 @@ def extract_social_links(
                         candidates["twitter_url"].append(clean)
 
         # 5. YouTube
-        if netloc in {"youtube.com", "youtu.be"} or netloc.endswith((".youtube.com", ".youtu.be")):
-            if not any(x in url_lower for x in ["/watch", "/embed", "/playlist"]):
-                path = parsed.path.rstrip("/")
-                if any(k in path for k in ["/@", "/channel/", "/c/", "/user/"]):
-                    clean = f"{parsed.scheme or 'https'}://{parsed.netloc}{path}"
-                    if clean not in candidates["youtube_url"]:
-                        candidates["youtube_url"].append(clean)
+        if netloc == "youtube.com" or netloc.endswith(".youtube.com"):
+            path = parsed.path.rstrip("/")
+            parts = [p for p in path.split("/") if p]
+            if parts:
+                non_channel = {
+                    "watch", "embed", "playlist", "shorts", "results", "feed",
+                    "gaming", "premium", "about", "ads", "creators", "t",
+                    "howyoutubeworks", "redirect", "live", "clip", "hashtag",
+                    "trends", "channel_switcher", "account", "logout", "signin"
+                }
+                if parts[0].lower() not in non_channel:
+                    if any(k in path for k in ["/@", "/channel/", "/c/", "/user/"]) or len(parts) == 1:
+                        clean = f"{parsed.scheme or 'https'}://{parsed.netloc}{path}"
+                        if clean not in candidates["youtube_url"]:
+                            candidates["youtube_url"].append(clean)
 
     # Score candidates against clean_domain and business_name tokens to pick contractor profile over third-parties
     target_tokens = set()
@@ -217,9 +230,10 @@ def extract_social_links(
         target_tokens.add(domain_base)
         target_tokens.update(t for t in re.split(r"[-_.]", clean_domain.lower()) if len(t) >= 3)
     if business_name:
+        active_stop_tokens = set(t.lower() for t in (stop_tokens if stop_tokens is not None else DEFAULT_SOCIAL_STOP_TOKENS))
         target_tokens.update(
             t for t in re.split(r"\W+", business_name.lower())
-            if len(t) >= 3 and t not in {"llc", "inc", "corp", "co", "the", "and", "roofing", "construction"}
+            if len(t) >= 3 and t not in active_stop_tokens
         )
 
     def score_candidate(cand_url: str) -> int:
@@ -349,10 +363,28 @@ def parse_json_ld(html_content: str) -> Dict[str, Any]:
                                 if isinstance(sa, str) and sa.strip():
                                     result["same_as"].append(sa.strip())
 
+                        def _add_clean_email(raw_val: Any):
+                            if isinstance(raw_val, list):
+                                for item in raw_val:
+                                    _add_clean_email(item)
+                                return
+                            if not isinstance(raw_val, str):
+                                return
+                            val = raw_val.strip()
+                            if not val:
+                                return
+                            val = re.sub(r"(?i)^mailto:", "", val).strip()
+                            val = val.split("?")[0].strip()
+                            try:
+                                val = urllib.parse.unquote(val).strip()
+                            except Exception:
+                                pass
+                            val = val.lower()
+                            if "@" in val and val not in result["emails"]:
+                                result["emails"].append(val)
+
                         # Extract direct or contactPoint emails
-                        c_email = c.get("email")
-                        if isinstance(c_email, str) and "@" in c_email:
-                            result["emails"].append(c_email.strip())
+                        _add_clean_email(c.get("email"))
 
                         cp = c.get("contactPoint") or []
                         if isinstance(cp, dict):
@@ -360,9 +392,7 @@ def parse_json_ld(html_content: str) -> Dict[str, Any]:
                         if isinstance(cp, list):
                             for p in cp:
                                 if isinstance(p, dict):
-                                    cp_email = p.get("email")
-                                    if isinstance(cp_email, str) and "@" in cp_email:
-                                        result["emails"].append(cp_email.strip())
+                                    _add_clean_email(p.get("email"))
 
                         # Decision Maker extraction
                         if not result["dm_name"]:
@@ -481,6 +511,37 @@ def discover_key_subpages(base_url: str, links: List[Dict[str, str]]) -> Dict[st
     return subpages
 
 
+def _should_preserve_status(lead: Dict[str, Any]) -> bool:
+    """
+    Determines whether a lead's existing status and status_reason should be preserved
+    during an audit / re-audit. Manual outreach, deferred, and manual triage decisions
+    are preserved, while automated disqualifications (e.g. Healthy Website) can re-evaluate.
+    """
+    status = (lead.get("status") or "").strip().lower()
+    if status in {"contacted", "replied", "won", "lost", "deferred"}:
+        return True
+
+    if status == "disqualified":
+        manual_notes = (lead.get("manual_notes") or "").lower()
+        status_reason = (lead.get("status_reason") or "").strip()
+        reason_lower = status_reason.lower()
+
+        if "[reviewed]" in manual_notes:
+            return True
+        if "manual" in reason_lower:
+            return True
+
+        automated_reasons = {
+            "healthy website (no conversion opportunity)",
+            "dead domain (no contact)",
+            "missing business name"
+        }
+        if reason_lower not in automated_reasons:
+            return True
+
+    return False
+
+
 async def audit_single_site(
     context: BrowserContext,
     lead: Dict[str, Any],
@@ -502,22 +563,33 @@ async def audit_single_site(
     db_path = config["app"]["db_path"]
 
     form_embed_domains = auditor_cfg.get("form_embed_domains", [
-        "form", "typeform", "hubspot", "jotform", "leadconnectorhq", "msgsndr",
-        "calendly", "roofr", "jobnimbus", "acculynx", "housecallpro", "podium", "wufoo"
+        "typeform", "hubspot", "hsforms", "jotform", "cognitoforms", "gravityforms",
+        "wpforms", "formstack", "formspree", "paperform", "tally.so", "fillout",
+        "leadconnectorhq", "msgsndr", "calendly", "acuityscheduling", "roofr",
+        "jobnimbus", "acculynx", "housecallpro", "podium", "wufoo", "docs.google.com/forms"
     ])
     form_keywords = auditor_cfg.get("form_keywords", [
-        "contact", "quote", "estimate", "schedule", "book", "request",
-        "get-started", "consultation", "reach-us", "get-in-touch"
+        "contact", "quote", "estimate", "schedule", "book-now", "book-online",
+        "book a", "booking", "appointment", "request", "get-started", "consultation",
+        "reach-us", "get-in-touch"
     ])
     agency_credit_patterns = auditor_cfg.get("agency_credit_patterns", [
         "designed by", "powered by", "website by", "built by", "marketing by",
         "developed by", "seo by", "created by"
     ])
     email_noise_tokens = auditor_cfg.get("email_noise_tokens", None)
+    trust_keywords = auditor_cfg.get("trust_keywords", [
+        "insured", "licensed", "warranty", "guarantee", "certified", "certifications",
+        "reviews", "bbb", "bonded", "accredited", "experience", "quality", "trusted",
+        "ratings", "satisfaction", "family-owned", "locally-owned", "years"
+    ])
+    social_stop_tokens = auditor_cfg.get("social_stop_tokens", None)
+
     eval_cfg = {
         "embed_domains": form_embed_domains,
         "form_keywords": form_keywords,
-        "credit_patterns": agency_credit_patterns
+        "credit_patterns": agency_credit_patterns,
+        "trust_keywords": trust_keywords
     }
 
     lead_id = lead["id"]
@@ -526,6 +598,7 @@ async def audit_single_site(
         url = f"https://{url}"
 
     total_bytes = 0
+    capturing_homepage_bytes = True
 
     async with semaphore:
         logging.info(f"Auditing [{lead_id}]: {url}")
@@ -534,6 +607,8 @@ async def audit_single_site(
 
         def on_response(response):
             nonlocal total_bytes
+            if not capturing_homepage_bytes:
+                return
             try:
                 # Ignore HTTP 206 (streaming media range requests)
                 if response.status == 206:
@@ -566,7 +641,32 @@ async def audit_single_site(
                     timed_out_load = True
                     logging.info(f"Page load timed out after {page_timeout_ms}ms for [{lead_id}]: {url}. Proceeding to evaluate rendered DOM...")
                 else:
-                    raise nav_err
+                    logging.info(f"Target [{lead_id}] unreachable / dead domain ({url}): {nav_err}")
+                    phone_line_type = classify_phone_line(lead.get("clean_phone"), db_path=db_path)
+                    lead_enriched = {**lead, "line_type": phone_line_type}
+                    unreach_label = f"Dead Domain / Site Unreachable: {str(nav_err)[:50]}"
+                    audit_payload = {
+                        "audit_completed": True,
+                        "has_website": True,
+                        "is_unreachable": True,
+                        "load_time_sec": -1.0,
+                        "ttfb_ms": -1,
+                        "page_weight_mb": 0.0,
+                        "dom_nodes": 0,
+                        "mobile_broken": 0,
+                        "cms_detected": "Unknown",
+                        "failed_major_test": 1,
+                        "flaw_codes": ["dead_domain"],
+                        "flaw_labels": [unreach_label],
+                        "primary_flaw_label": unreach_label,
+                        "line_type": phone_line_type
+                    }
+                    status, status_reason, priority_score = classifier.classify_lead(lead_enriched, audit_payload, config)
+                    if _should_preserve_status(lead):
+                        status = lead["status"]
+                        status_reason = lead.get("status_reason") or status_reason
+                    database.update_lead_audit(lead_id, audit_payload, status, status_reason, priority_score, db_path=db_path)
+                    return
 
             wall_clock_elapsed = time.perf_counter() - t_start
 
@@ -597,6 +697,13 @@ async def audit_single_site(
                 except Exception:
                     pass
                 await asyncio.sleep(0.5)
+
+            # Freeze total_bytes after homepage load & hydration before scrolling or subpage visits
+            capturing_homepage_bytes = False
+            try:
+                page.remove_listener("response", on_response)
+            except Exception:
+                pass
 
             # Check if challenge / security interstitial screen
             challenge_indicators = [
@@ -640,7 +747,7 @@ async def audit_single_site(
                     "line_type": phone_line_type
                 }
                 status, status_reason, priority_score = classifier.classify_lead(lead_enriched, audit_payload, config)
-                if lead.get("status") in ("contacted", "replied", "won", "lost"):
+                if _should_preserve_status(lead):
                     status = lead["status"]
                     status_reason = lead.get("status_reason") or status_reason
                 database.update_lead_audit(lead_id, audit_payload, status, status_reason, priority_score, db_path=db_path)
@@ -661,6 +768,7 @@ async def audit_single_site(
                 const embedDomains = cfg.embed_domains || [];
                 const formKeywords = cfg.form_keywords || [];
                 const creditPatterns = cfg.credit_patterns || [];
+                const trustKeywords = cfg.trust_keywords || [];
 
                 const nav = performance.getEntriesByType('navigation')[0];
                 let loadTimeSec = 0;
@@ -732,7 +840,7 @@ async def audit_single_site(
 
                 const interactive = Array.from(document.querySelectorAll('a, button, input[type="submit"]')).map(el => ((el.innerText || el.value || '')).toLowerCase());
                 const hasCta = interactive.some(t => formKeywords.some(kw => t.includes(kw)));
-                const hasLeadCapture = (hasTelLink || hasOnPageFormOrEmbed || hasCta);
+                const hasLeadCapture = (hasOnPageFormOrEmbed || hasCta);
 
                 // Sticky header screen takeover (ignore hidden elements, overlays, drawers, and modal backdrops)
                 let maxStickyPct = 0;
@@ -763,19 +871,22 @@ async def audit_single_site(
 
                 // Foundational trust anchors
                 const bodyText = (document.body ? document.body.innerText || '' : '').toLowerCase();
-                const trustKeywords = [
-                    'insured', 'licensed', 'warranty', 'guarantee', 'certified', 'certifications',
-                    'reviews', 'bbb', 'bonded', 'accredited', 'experience', 'quality', 'trusted',
-                    'ratings', 'satisfaction', 'family-owned', 'locally-owned', 'years'
-                ];
                 const trustSignals = trustKeywords.filter(kw => bodyText.includes(kw)).length;
 
                 // Helper: detect if an anchor is inside an agency credit container
+                const BLOCK_CONTAINER_TAGS = new Set(['BODY', 'MAIN', 'FOOTER', 'HEADER', 'NAV', 'SECTION', 'ASIDE']);
                 function isAgencyCredit(a) {
                     let curr = a;
-                    for (let i = 0; i < 4; i++) {
+                    for (let i = 0; i < 3; i++) {
                         if (!curr) break;
-                        const pText = (curr.innerText || curr.textContent || '').toLowerCase();
+                        if (i > 0 && BLOCK_CONTAINER_TAGS.has((curr.tagName || '').toUpperCase())) {
+                            break;
+                        }
+                        const pText = (curr.innerText || curr.textContent || '').trim().toLowerCase();
+                        const linkCount = curr.querySelectorAll ? curr.querySelectorAll('a[href]').length : 0;
+                        if (i > 0 && (pText.length > 140 || linkCount > 3)) {
+                            break;
+                        }
                         if (creditPatterns.some(pat => pText.includes(pat))) {
                             return true;
                         }
@@ -862,15 +973,12 @@ async def audit_single_site(
             # Extract emails with noise filtering
             dm_emails, generic_emails = extract_emails(html_content, generic_prefixes, noise_tokens=email_noise_tokens)
 
-            # Merge JSON-LD emails with highest priority
-            for j_email in json_ld_data.get("emails", []):
-                j_clean = j_email.lower().strip()
-                if any(j_clean.startswith(p) for p in generic_prefixes):
-                    if j_clean not in generic_emails:
-                        generic_emails.insert(0, j_clean)
-                else:
-                    if j_clean not in dm_emails:
-                        dm_emails.insert(0, j_clean)
+            # Validate and merge JSON-LD emails with highest priority
+            raw_jsonld_emails = json_ld_data.get("emails", [])
+            if raw_jsonld_emails:
+                j_dm, j_gen = extract_emails(" ".join(raw_jsonld_emails), generic_prefixes, noise_tokens=email_noise_tokens)
+                dm_emails = list(dict.fromkeys(j_dm + dm_emails))
+                generic_emails = list(dict.fromkeys(j_gen + generic_emails))
 
             # Clean domain and business name for social token-overlap scoring
             business_name = lead.get("business_name") or ""
@@ -878,13 +986,13 @@ async def audit_single_site(
 
             # 2. Extract social links: JSON-LD sameAs first (highest priority), then non-credit page links
             same_as_links = json_ld_data.get("same_as", [])
-            jsonld_socials = extract_social_links(same_as_links, business_name=business_name, clean_domain=clean_domain)
+            jsonld_socials = extract_social_links(same_as_links, business_name=business_name, clean_domain=clean_domain, stop_tokens=social_stop_tokens)
 
             non_credit_links = [
                 l["href"] for l in metrics.get("raw_links", [])
                 if l.get("href") and not l.get("is_credit")
             ]
-            page_socials = extract_social_links(non_credit_links, business_name=business_name, clean_domain=clean_domain)
+            page_socials = extract_social_links(non_credit_links, business_name=business_name, clean_domain=clean_domain, stop_tokens=social_stop_tokens)
 
             socials = {}
             for platform in ["facebook_url", "instagram_url", "linkedin_url", "twitter_url", "youtube_url"]:
@@ -928,11 +1036,19 @@ async def audit_single_site(
                             const embedDomains = cfg.embed_domains || [];
                             const creditPatterns = cfg.credit_patterns || [];
 
+                            const BLOCK_CONTAINER_TAGS = new Set(['BODY', 'MAIN', 'FOOTER', 'HEADER', 'NAV', 'SECTION', 'ASIDE']);
                             function isAgencyCredit(a) {
                                 let curr = a;
-                                for (let i = 0; i < 4; i++) {
+                                for (let i = 0; i < 3; i++) {
                                     if (!curr) break;
-                                    const pText = (curr.innerText || curr.textContent || '').toLowerCase();
+                                    if (i > 0 && BLOCK_CONTAINER_TAGS.has((curr.tagName || '').toUpperCase())) {
+                                        break;
+                                    }
+                                    const pText = (curr.innerText || curr.textContent || '').trim().toLowerCase();
+                                    const linkCount = curr.querySelectorAll ? curr.querySelectorAll('a[href]').length : 0;
+                                    if (i > 0 && (pText.length > 140 || linkCount > 3)) {
+                                        break;
+                                    }
                                     if (creditPatterns.some(pat => pText.includes(pat))) {
                                         return true;
                                     }
@@ -953,7 +1069,33 @@ async def audit_single_site(
                                     break;
                                 }
                             }
-                            const hasForm = document.querySelectorAll('form, input[type="tel"], input[type="email"], textarea').length > 0 || formIframe;
+
+                            // Detect real on-page form (excluding search-only forms)
+                            const forms = Array.from(document.querySelectorAll('form'));
+                            const hasRealForm = forms.some(f => {
+                                const action = (f.getAttribute('action') || '').toLowerCase();
+                                const role = (f.getAttribute('role') || '').toLowerCase();
+                                if (role === 'search' || action.includes('search')) return false;
+                                const inputs = Array.from(f.querySelectorAll('input, textarea, select'));
+                                const nonSearchInputs = inputs.filter(inp => {
+                                    const t = (inp.getAttribute('type') || 'text').toLowerCase();
+                                    const n = (inp.getAttribute('name') || '').toLowerCase();
+                                    return t !== 'search' && t !== 'hidden' && !n.includes('search') && n !== 's';
+                                });
+                                return nonSearchInputs.length > 0;
+                            });
+
+                            const hasDirectInputs = Array.from(document.querySelectorAll('input[type="tel"], input[type="email"], textarea')).some(el => {
+                                const parentForm = el.closest('form');
+                                if (parentForm) {
+                                    const action = (parentForm.getAttribute('action') || '').toLowerCase();
+                                    const role = (parentForm.getAttribute('role') || '').toLowerCase();
+                                    if (role === 'search' || action.includes('search')) return false;
+                                }
+                                return true;
+                            });
+
+                            const hasForm = hasRealForm || hasDirectInputs || formIframe;
 
                             return {
                                 links: links,
@@ -962,7 +1104,7 @@ async def audit_single_site(
                         }""", eval_cfg)
 
                         sub_links = sub_metrics.get("links", [])
-                        sub_socials = extract_social_links(sub_links, business_name=business_name, clean_domain=clean_domain)
+                        sub_socials = extract_social_links(sub_links, business_name=business_name, clean_domain=clean_domain, stop_tokens=social_stop_tokens)
                         for k, v in sub_socials.items():
                             if not socials.get(k) and v:
                                 socials[k] = v
@@ -975,7 +1117,7 @@ async def audit_single_site(
                         # JSON-LD on subpage
                         sub_json_ld = parse_json_ld(sub_html)
                         for sa in sub_json_ld.get("same_as", []):
-                            sa_socials = extract_social_links([sa], business_name=business_name, clean_domain=clean_domain)
+                            sa_socials = extract_social_links([sa], business_name=business_name, clean_domain=clean_domain, stop_tokens=social_stop_tokens)
                             for k, v in sa_socials.items():
                                 if not socials.get(k) and v:
                                     socials[k] = v
@@ -1001,31 +1143,23 @@ async def audit_single_site(
                         if sub_has_tel:
                             metrics["has_tel_link"] = 1
 
-                        # Subpage images & visual proof
+                        # Subpage images & visual proof (excluding tracking pixels, analytics, and data URIs)
                         sub_images = await sub_page.evaluate("""() => {
                             const imgs = Array.from(document.querySelectorAll('img')).filter(img => {
                                 const rect = img.getBoundingClientRect();
-                                return (img.naturalWidth > 50 || rect.width > 50 || img.width > 50) && (img.naturalHeight > 50 || rect.height > 50 || img.height > 50);
+                                const isNotTiny = (img.naturalWidth > 50 || rect.width > 50 || img.width > 50) && (img.naturalHeight > 50 || rect.height > 50 || img.height > 50);
+                                const src = (img.src || '').toLowerCase();
+                                const isNotPixel = !src.includes('pixel') && !src.includes('analytics') && !src.includes('data:image/svg') && !src.includes('spacer');
+                                return isNotTiny && isNotPixel;
                             });
                             return imgs.length;
                         }""")
                         metrics["image_count"] += sub_images
 
-                        # Subpage trust signals
+                        # Subpage trust signals (reusing trust_keywords from config)
                         sub_text = (await sub_page.evaluate("() => document.body ? document.body.innerText : ''")).lower()
-                        trust_keywords = [
-                            'insured', 'licensed', 'warranty', 'guarantee', 'certified', 'certifications',
-                            'reviews', 'bbb', 'bonded', 'accredited', 'experience', 'quality', 'trusted',
-                            'ratings', 'satisfaction', 'family-owned', 'locally-owned', 'years'
-                        ]
                         sub_trust = sum(1 for kw in trust_keywords if kw in sub_text)
                         metrics["trust_signals"] += sub_trust
-
-                        # Decision maker fallback from subpage text if not found in JSON-LD
-                        if not dm_name:
-                            sub_dm_name, sub_dm_title = extract_decision_maker(sub_html)
-                            if sub_dm_name:
-                                dm_name, dm_title = sub_dm_name, sub_dm_title
 
                     finally:
                         await sub_page.close()
@@ -1053,15 +1187,12 @@ async def audit_single_site(
             flaw_labels: List[str] = []
 
             # Check if page is an unrendered or bot-blocked shell
-            if dom_nodes < min_rendered_dom_nodes and metrics["text_length"] < min_rendered_text_chars:
+            if dom_nodes < min_rendered_dom_nodes or metrics["text_length"] < min_rendered_text_chars:
                 page_title = await page.title()
                 final_url = page.url
                 logging.warning(f"Target [{lead_id}] render incomplete ({dom_nodes} DOM nodes, {metrics['text_length']} chars). Title: '{page_title}', URL: '{final_url}'")
                 flaw_codes.append("render_incomplete")
                 flaw_labels.append("Render Incomplete / Blocked Shell (Manual Verification Required)")
-                if load_time_sec > thresholds["max_load_time_seconds"]:
-                    flaw_codes.append("slow_load")
-                    flaw_labels.append(f"Slow Load ({load_time_sec}s)")
             else:
                 if load_time_sec > thresholds["max_load_time_seconds"]:
                     flaw_codes.append("slow_load")
@@ -1110,6 +1241,15 @@ async def audit_single_site(
             if not phone_line_type or phone_line_type == "Unknown":
                 phone_line_type = classify_phone_line(lead.get("clean_phone"), db_path=db_path)
 
+            existing_wa_src = (
+                lead.get("whatsapp_source")
+                or (lead.get("audit_json") if isinstance(lead.get("audit_json"), dict) else {}).get("whatsapp_source")
+            )
+            verified_wa_url = whatsapp_url if is_whatsapp_active else None
+            if not verified_wa_url and lead.get("whatsapp_url"):
+                if existing_wa_src != "mobile_registry" and whatsapp_source != "mobile_registry":
+                    verified_wa_url = lead.get("whatsapp_url")
+
             audit_payload = {
                 "audit_completed": True,
                 "has_website": True,
@@ -1138,8 +1278,8 @@ async def audit_single_site(
                 "linkedin_url": socials.get("linkedin_url") or lead.get("linkedin_url"),
                 "twitter_url": socials.get("twitter_url") or lead.get("twitter_url"),
                 "youtube_url": socials.get("youtube_url") or lead.get("youtube_url"),
-                "whatsapp_url": whatsapp_url or lead.get("whatsapp_url"),
-                "is_whatsapp_active": is_whatsapp_active or bool(lead.get("whatsapp_url")),
+                "whatsapp_url": verified_wa_url,
+                "is_whatsapp_active": bool(is_whatsapp_active),
                 "whatsapp_source": whatsapp_source,
                 "form_url": metrics.get("form_url") or lead.get("form_url"),
                 "line_type": phone_line_type or lead.get("line_type")
@@ -1154,46 +1294,51 @@ async def audit_single_site(
                 "generic_email": chosen_generic_email or lead.get("generic_email"),
                 "facebook_url": socials.get("facebook_url") or lead.get("facebook_url"),
                 "instagram_url": socials.get("instagram_url") or lead.get("instagram_url"),
-                "whatsapp_url": whatsapp_url or lead.get("whatsapp_url"),
+                "whatsapp_url": verified_wa_url,
                 "form_url": metrics.get("form_url") or lead.get("form_url"),
                 "line_type": phone_line_type or lead.get("line_type")
             }
 
             status, status_reason, priority_score = classifier.classify_lead(lead_enriched, audit_payload, config)
-            if lead.get("status") in ("contacted", "replied", "won", "lost"):
+            if _should_preserve_status(lead):
                 status = lead["status"]
                 status_reason = lead.get("status_reason") or status_reason
             database.update_lead_audit(lead_id, audit_payload, status, status_reason, priority_score, db_path=db_path)
             logging.info(f"[Audit Completed] ID {lead_id} -> {status} ({status_reason}, Score: {priority_score}) | Flaws: {primary_flaw_label}")
 
         except Exception as e:
-            logging.warning(f"Audit failed for ID {lead_id} ({url}): {e}")
-            phone_line_type = classify_phone_line(lead.get("clean_phone"), db_path=db_path)
-            lead_enriched = {**lead, "line_type": phone_line_type}
-            audit_payload = {
-                "audit_completed": True,
-                "has_website": True,
-                "is_unreachable": True,
-                "load_time_sec": -1.0,
-                "ttfb_ms": -1,
-                "page_weight_mb": 0.0,
-                "dom_nodes": 0,
-                "mobile_broken": 0,
-                "cms_detected": "Unknown",
-                "failed_major_test": 1,
-                "flaw_codes": ["server_delay"],
-                "flaw_labels": [f"Site Unreachable: {str(e)[:50]}"],
-                "primary_flaw_label": f"Site Unreachable: {str(e)[:50]}",
-                "line_type": phone_line_type
-            }
-            status, status_reason, priority_score = classifier.classify_lead(lead_enriched, audit_payload, config)
-            if lead.get("status") in ("contacted", "replied", "won", "lost"):
-                status = lead["status"]
-                status_reason = lead.get("status_reason") or status_reason
-            database.update_lead_audit(lead_id, audit_payload, status, status_reason, priority_score, db_path=db_path)
+            logging.error(f"Unexpected audit error for ID {lead_id} ({url}): {e}", exc_info=True)
         finally:
             if not page.is_closed():
                 await page.close()
+
+
+def decode_bing_redirect(url: str) -> str:
+    """
+    Decodes Bing click-tracking redirects (e.g. /ck/a?...&u=a1<base64>...)
+    back to the destination URL. Returns url unchanged if not a valid Bing redirect.
+    """
+    if not url or not isinstance(url, str):
+        return url
+    try:
+        parsed = urllib.parse.urlparse(url)
+        netloc = parsed.netloc.lower()
+        if (netloc == "bing.com" or netloc.endswith(".bing.com")) and parsed.path.startswith("/ck/a"):
+            query_params = urllib.parse.parse_qs(parsed.query)
+            u_vals = query_params.get("u")
+            if u_vals and u_vals[0]:
+                u_str = u_vals[0]
+                if u_str.startswith("a1"):
+                    raw_b64 = u_str[2:]
+                    padding = (4 - len(raw_b64) % 4) % 4
+                    if padding:
+                        raw_b64 += "=" * padding
+                    decoded = base64.urlsafe_b64decode(raw_b64.encode("ascii")).decode("utf-8", errors="ignore")
+                    if decoded.startswith(("http://", "https://")):
+                        return decoded
+    except Exception:
+        pass
+    return url
 
 
 def recover_missing_website(business_name: str, city: str, excluded_domains: Optional[List[str]] = None) -> Optional[str]:
@@ -1223,7 +1368,8 @@ def recover_missing_website(business_name: str, city: str, excluded_domains: Opt
             html = resp.read().decode("utf-8", errors="ignore")
 
         matches = re.findall(r'<li class="b_algo">.*?<h2><a href="([^"]+)"', html, re.DOTALL)
-        for link in matches:
+        for raw_link in matches:
+            link = decode_bing_redirect(raw_link)
             netloc = urllib.parse.urlparse(link).netloc.lower()
             if netloc.startswith("www."):
                 netloc = netloc[4:]
@@ -1309,7 +1455,7 @@ async def run_site_auditor(config, re_audit: bool = False, lead_id: Optional[int
 
     # 1. Process Path B leads (No Website) first if not auditing a specific lead and not re-auditing
     if not lead_id and not re_audit:
-        process_no_website_leads(config)
+        await asyncio.to_thread(process_no_website_leads, config)
 
     # 2. Process Path A leads (Has Website)
     if lead_id:
@@ -1329,14 +1475,16 @@ async def run_site_auditor(config, re_audit: bool = False, lead_id: Optional[int
     logging.info(f"Found {len(leads_to_audit)} websites to audit (re_audit={re_audit}). Concurrency limit: {concurrency}")
     semaphore = asyncio.Semaphore(concurrency)
 
-    launch_args = [
-        "--disable-blink-features=AutomationControlled",
-        "--no-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-gpu"
-    ]
-
     auditor_cfg = config.get("auditor", {})
+    launch_args = auditor_cfg.get(
+        "headless_args",
+        [
+            "--disable-blink-features=AutomationControlled",
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu"
+        ]
+    )
     mobile_user_agent = auditor_cfg.get(
         "mobile_user_agent",
         "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1"

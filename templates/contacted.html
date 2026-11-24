@@ -2,7 +2,7 @@
 
 {% block title %}Contacted Leads Log | LeadPipeline{% endblock %}
 {% block header_title %}Contacted Leads Log{% endblock %}
-{% block header_subtitle %}Track every contractor contacted across WhatsApp, phone, email, and quote forms{% endblock %}
+{% block header_subtitle %}Track every business contacted across WhatsApp, phone, email, and contact forms{% endblock %}
 
 {% block content %}
 <div class="archive-page-wrapper">
@@ -63,28 +63,28 @@
     <div class="table-filter-bar">
       <!-- Channel Filter Tabs -->
       <div class="status-tabs">
-        <a href="/contacted?channel=all{% if search %}&search={{ search }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
-           class="tab-btn {% if current_channel == 'all' or not current_channel %}active{% endif %}">
+        <a href="/contacted?channel=all{% if search %}&search={{ search | urlencode }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
+          class="tab-btn {% if current_channel == 'all' or not current_channel %}active{% endif %}">
           All ({{ contacted_stats.total | default(0) }})
         </a>
-        <a href="/contacted?channel=whatsapp{% if search %}&search={{ search }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
-           class="tab-btn {% if current_channel == 'whatsapp' %}active{% endif %}">
+        <a href="/contacted?channel=whatsapp{% if search %}&search={{ search | urlencode }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
+          class="tab-btn {% if current_channel == 'whatsapp' %}active{% endif %}">
           💬 WhatsApp ({{ contacted_stats.whatsapp | default(0) }})
         </a>
-        <a href="/contacted?channel=phone{% if search %}&search={{ search }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
-           class="tab-btn {% if current_channel == 'phone' %}active{% endif %}">
+        <a href="/contacted?channel=phone{% if search %}&search={{ search | urlencode }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
+          class="tab-btn {% if current_channel == 'phone' %}active{% endif %}">
           📞 Phone ({{ contacted_stats.phone | default(0) }})
         </a>
-        <a href="/contacted?channel=email{% if search %}&search={{ search }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
-           class="tab-btn {% if current_channel == 'email' %}active{% endif %}">
+        <a href="/contacted?channel=email{% if search %}&search={{ search | urlencode }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
+          class="tab-btn {% if current_channel == 'email' %}active{% endif %}">
           ✉️ Email ({{ contacted_stats.email | default(0) }})
         </a>
-        <a href="/contacted?channel=form{% if search %}&search={{ search }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
-           class="tab-btn {% if current_channel == 'form' %}active{% endif %}">
+        <a href="/contacted?channel=form{% if search %}&search={{ search | urlencode }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
+          class="tab-btn {% if current_channel == 'form' %}active{% endif %}">
           📝 Form ({{ contacted_stats.form | default(0) }})
         </a>
-        <a href="/contacted?channel=facebook{% if search %}&search={{ search }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
-           class="tab-btn {% if current_channel == 'facebook' %}active{% endif %}">
+        <a href="/contacted?channel=facebook{% if search %}&search={{ search | urlencode }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
+          class="tab-btn {% if current_channel == 'facebook' %}active{% endif %}">
           📘 Facebook ({{ contacted_stats.facebook | default(0) }})
         </a>
       </div>
@@ -94,39 +94,36 @@
         <!-- Search Form -->
         <form method="GET" action="/contacted" style="display: flex; gap: 8px; align-items: center;">
           {% if current_channel %}
-            <input type="hidden" name="channel" value="{{ current_channel }}">
+          <input type="hidden" name="channel" value="{{ current_channel }}">
           {% endif %}
           {% if view_mode %}
-            <input type="hidden" name="view" value="{{ view_mode }}">
+          <input type="hidden" name="view" value="{{ view_mode }}">
           {% endif %}
-          <input type="text"
-                 name="search"
-                 class="search-input"
-                 placeholder="Search name, phone, city, notes..."
-                 value="{{ search | default('') }}"
-                 style="min-width: 220px;">
-          <button type="submit" class="btn-action" style="background: var(--bg-subtle); border: 1px solid var(--border-color);">
+          <input type="text" name="search" class="search-input" placeholder="Search name, phone, city, notes..."
+            value="{{ search | default('') }}" style="min-width: 220px;">
+          <button type="submit" class="btn-action"
+            style="background: var(--bg-subtle); border: 1px solid var(--border-color);">
             Filter
           </button>
           {% if search %}
-            <a href="/contacted?channel={{ current_channel | default('all') }}&view={{ view_mode | default('table') }}"
-               class="btn-action"
-               style="text-decoration: none; background: transparent; border: 1px solid var(--border-color); color: var(--text-muted);">
-              Clear
-            </a>
+          <a href="/contacted?channel={{ current_channel | default('all') }}&view={{ view_mode | default('table') }}"
+            class="btn-action"
+            style="text-decoration: none; background: transparent; border: 1px solid var(--border-color); color: var(--text-muted);">
+            Clear
+          </a>
           {% endif %}
         </form>
 
         <!-- View Switcher (Individual Cards Grid vs Table View) -->
         <div class="view-toggle-bar">
-          <a href="/contacted?channel={{ current_channel | default('all') }}{% if search %}&search={{ search }}{% endif %}&view=table"
-             class="view-toggle-btn {% if view_mode != 'grid' %}active{% endif %}"
-             title="Switch to compact tabular view">
+          <a href="/contacted?channel={{ current_channel | default('all') }}{% if search %}&search={{ search | urlencode }}{% endif %}{% if page and page > 1 %}&page={{ page }}{% endif %}&view=table"
+            class="view-toggle-btn {% if view_mode != 'grid' %}active{% endif %}"
+            title="Switch to compact tabular view">
             <span>☰</span> Table View
           </a>
-          <a href="/contacted?channel={{ current_channel | default('all') }}{% if search %}&search={{ search }}{% endif %}&view=grid"
-             class="view-toggle-btn {% if view_mode == 'grid' %}active{% endif %}"
-             title="Switch to detailed cards grid view">
+          <a href="/contacted?channel={{ current_channel | default('all') }}{% if search %}&search={{ search | urlencode }}{% endif %}{% if page and page > 1 %}&page={{ page }}{% endif %}&view=grid"
+            class="view-toggle-btn {% if view_mode == 'grid' %}active{% endif %}"
+            title="Switch to detailed cards grid view">
             <span>▦</span> Cards Grid
           </a>
         </div>
@@ -134,257 +131,292 @@
     </div>
 
     {% if view_mode == 'grid' %}
-      <!-- Detailed Individual Cards Grid View for Contacted Leads -->
-      <div style="padding: 24px; background: var(--bg-main);">
-        <div class="all-cards-grid">
-          {% if contacted_leads %}
-            {% for c_lead in contacted_leads %}
-              <div class="card-grid-item" id="grid-lead-{{ c_lead.id }}">
-                <div class="grid-card-banner">
-                  <div style="display: flex; align-items: center; gap: 8px;">
-                    <span class="grid-lead-num">#{{ loop.index }} • Lead ID #{{ c_lead.id }}</span>
-                    {% set ch = c_lead.last_channel | lower %}
-                    {% if ch == 'whatsapp' %}
-                      <span class="channel-pill" style="background: rgba(34, 197, 94, 0.15); color: #22c55e; border-color: rgba(34, 197, 94, 0.3); font-weight: 600;">💬 WhatsApp</span>
-                    {% elif ch == 'phone' %}
-                      <span class="channel-pill" style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; border-color: rgba(59, 130, 246, 0.3); font-weight: 600;">📞 Phone Call</span>
-                    {% elif ch == 'email' %}
-                      <span class="channel-pill" style="background: rgba(168, 85, 247, 0.15); color: #c084fc; border-color: rgba(168, 85, 247, 0.3); font-weight: 600;">✉️ Cold Email</span>
-                    {% elif ch == 'form' %}
-                      <span class="channel-pill" style="background: rgba(245, 158, 11, 0.15); color: #fbbf24; border-color: rgba(245, 158, 11, 0.3); font-weight: 600;">📝 Quote Form</span>
-                    {% elif ch == 'facebook' %}
-                      <span class="channel-pill" style="background: rgba(37, 99, 235, 0.15); color: #3b82f6; border-color: rgba(37, 99, 235, 0.3); font-weight: 600;">📘 Facebook</span>
-                    {% else %}
-                      <span class="status-badge contacted">{{ ch | title }}</span>
-                    {% endif %}
-                  </div>
-                  <div style="display: flex; align-items: center; gap: 8px;">
-                    <span style="font-size: 11px; color: var(--text-muted);">
-                      ⏱️ {{ c_lead.contacted_at | default(c_lead.updated_at) }}
-                    </span>
-                    <button class="btn-action"
-                            style="padding: 3px 8px; font-size: 11px; background: var(--bg-subtle); color: var(--text-primary); border: 1px solid var(--border-color);"
-                            hx-get="/api/leads/{{ c_lead.id }}/modal"
-                            hx-target="#lead-drawer-content"
-                            hx-swap="innerHTML"
-                            onclick="openDrawer()">
-                      Slide-Out ↗
-                    </button>
-                  </div>
-                </div>
-                {% set lead = c_lead %}
-                {% set is_contacted_page = true %}
-                {% include "partials/lead_card.html" %}
-              </div>
-            {% endfor %}
-          {% else %}
-            <div class="empty-queue-card" style="grid-column: 1 / -1;">
-              <div class="empty-icon">📭</div>
-              <h2>No Contacted Leads Found</h2>
-              <p>No contacted leads match your current filter or search criteria.</p>
-              <div style="margin-top: 16px;">
-                <a href="/" class="btn-action btn-channel" style="text-decoration: none; display: inline-flex;">
-                  Go to Daily Queue 🎯
-                </a>
-              </div>
+    <!-- Detailed Individual Cards Grid View for Contacted Leads -->
+    <div style="padding: 24px; background: var(--bg-main);">
+      <div class="all-cards-grid">
+        {% if contacted_leads %}
+        {% for c_lead in contacted_leads %}
+        <div class="card-grid-item" id="grid-lead-{{ c_lead.id }}">
+          <div class="grid-card-banner">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span class="grid-lead-num">#{{ loop.index }} • Lead ID #{{ c_lead.id }}</span>
+              {% set ch = c_lead.last_channel | lower %}
+              {% if ch == 'whatsapp' %}
+              <span class="channel-pill"
+                style="background: rgba(34, 197, 94, 0.15); color: #22c55e; border-color: rgba(34, 197, 94, 0.3); font-weight: 600;">💬
+                WhatsApp</span>
+              {% elif ch == 'phone' %}
+              <span class="channel-pill"
+                style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; border-color: rgba(59, 130, 246, 0.3); font-weight: 600;">📞
+                Phone Call</span>
+              {% elif ch == 'email' %}
+              <span class="channel-pill"
+                style="background: rgba(168, 85, 247, 0.15); color: #c084fc; border-color: rgba(168, 85, 247, 0.3); font-weight: 600;">✉️
+                Cold Email</span>
+              {% elif ch == 'form' %}
+              <span class="channel-pill"
+                style="background: rgba(245, 158, 11, 0.15); color: #fbbf24; border-color: rgba(245, 158, 11, 0.3); font-weight: 600;">📝
+                Contact Form</span>
+              {% elif ch == 'facebook' %}
+              <span class="channel-pill"
+                style="background: rgba(37, 99, 235, 0.15); color: #3b82f6; border-color: rgba(37, 99, 235, 0.3); font-weight: 600;">📘
+                Facebook</span>
+              {% else %}
+              <span class="status-badge contacted">{{ ch | title }}</span>
+              {% endif %}
             </div>
-          {% endif %}
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 11px; color: var(--text-muted);">
+                ⏱️ {{ c_lead.contacted_at | default(c_lead.updated_at) }}
+              </span>
+              <button class="btn-action"
+                style="padding: 3px 8px; font-size: 11px; background: var(--bg-subtle); color: var(--text-primary); border: 1px solid var(--border-color);"
+                hx-get="/api/leads/{{ c_lead.id }}/modal"
+                hx-target="#lead-drawer-content"
+                hx-swap="innerHTML"
+                onclick="openDrawer()">
+                Slide-Out ↗
+              </button>
+            </div>
+          </div>
+          {% set lead = c_lead %}
+          {% set in_grid = true %}
+          {% set is_contacted_page = true %}
+          {% include "partials/lead_card.html" %}
         </div>
-      </div>
-
+      {% endfor %}
     {% else %}
-      <!-- Clear CRM Table View with Slide-Over Drawer Integration -->
-      <div style="overflow-x: auto;">
-        <table class="crm-table">
-          <thead>
-            <tr>
-              <th style="width: 50px;">ID</th>
-              <th style="width: 26%;">Contractor & Reputation</th>
-              <th style="width: 18%;">Contact Channel & Time</th>
-              <th style="width: 22%;">Direct Contact Info</th>
-              <th style="width: 14%;">City / Niche</th>
-              <th style="width: 20%;">Outreach Pitch & Notes</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% if contacted_leads %}
-              {% for c_lead in contacted_leads %}
-                <tr class="table-lead-row"
-                    id="row-contacted-{{ c_lead.id }}"
-                    hx-get="/api/leads/{{ c_lead.id }}/modal"
-                    hx-target="#lead-drawer-content"
-                    hx-swap="innerHTML"
-                    onclick="handleRowClick(event)">
-                  
-                  <!-- ID -->
-                  <td style="font-family: monospace; color: var(--text-muted);">#{{ c_lead.id }}</td>
-
-                  <!-- Contractor & Reputation -->
-                  <td>
-                    <strong style="color: var(--text-primary); font-size: 14px; display: block;">{{ c_lead.business_name }}</strong>
-                    <div style="display: flex; align-items: center; gap: 8px; margin-top: 3px;">
-                      {% if c_lead.rating and c_lead.rating > 0 %}
-                        <span style="font-size: 11px; color: #b45309; font-weight: 600;">★ {{ "%.1f"|format(c_lead.rating) }} ({{ c_lead.review_count | default(0) }})</span>
-                      {% endif %}
-                      {% if c_lead.website_url %}
-                        <a href="{{ c_lead.website_url | external_url }}"
-                           target="_blank"
-                           rel="noopener noreferrer"
-                           class="table-link"
-                           style="font-size: 11px;"
-                           onclick="event.stopPropagation()">
-                          🌐 {{ c_lead.clean_domain | default('Visit') }} ↗
-                        </a>
-                      {% endif %}
-                    </div>
-                  </td>
-
-                  <!-- Channel & Timestamp -->
-                  <td>
-                    {% set ch = c_lead.last_channel | lower %}
-                    {% if ch == 'whatsapp' %}
-                      <span class="channel-pill" style="background: rgba(34, 197, 94, 0.15); color: #22c55e; border-color: rgba(34, 197, 94, 0.3); font-weight: 600;">
-                        💬 WhatsApp
-                      </span>
-                    {% elif ch == 'phone' %}
-                      <span class="channel-pill" style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; border-color: rgba(59, 130, 246, 0.3); font-weight: 600;">
-                        📞 Phone Call
-                      </span>
-                    {% elif ch == 'email' %}
-                      <span class="channel-pill" style="background: rgba(168, 85, 247, 0.15); color: #c084fc; border-color: rgba(168, 85, 247, 0.3); font-weight: 600;">
-                        ✉️ Cold Email
-                      </span>
-                    {% elif ch == 'form' %}
-                      <span class="channel-pill" style="background: rgba(245, 158, 11, 0.15); color: #fbbf24; border-color: rgba(245, 158, 11, 0.3); font-weight: 600;">
-                        📝 Quote Form
-                      </span>
-                    {% elif ch == 'facebook' %}
-                      <span class="channel-pill" style="background: rgba(37, 99, 235, 0.15); color: #3b82f6; border-color: rgba(37, 99, 235, 0.3); font-weight: 600;">
-                        📘 Facebook
-                      </span>
-                    {% else %}
-                      <span class="status-badge contacted">
-                        {{ ch | title }}
-                      </span>
-                    {% endif %}
-                    <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
-                      ⏱️ {{ c_lead.contacted_at | default(c_lead.updated_at) }}
-                    </div>
-                  </td>
-
-                  <!-- Direct Contact Details -->
-                  <td>
-                    {% if c_lead.clean_phone or c_lead.phone %}
-                      <div>
-                        <a href="tel:{{ c_lead.clean_phone | default(c_lead.phone) }}"
-                           class="table-link"
-                           onclick="event.stopPropagation()">
-                          📞 {{ c_lead.clean_phone | default(c_lead.phone) }}
-                        </a>
-                      </div>
-                    {% endif %}
-                    {% if c_lead.dm_name %}
-                      <div style="font-size: 12px; color: var(--text-secondary); margin-top: 2px;">
-                        👤 {{ c_lead.dm_name }}
-                      </div>
-                    {% endif %}
-                    {% if c_lead.dm_email or c_lead.generic_email %}
-                      <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">
-                        <a href="mailto:{{ c_lead.dm_email | default(c_lead.generic_email) }}"
-                           class="table-link"
-                           onclick="event.stopPropagation()">
-                          ✉️ {{ c_lead.dm_email | default(c_lead.generic_email) }}
-                        </a>
-                      </div>
-                    {% endif %}
-                    {% if c_lead.facebook_url %}
-                      <div style="font-size: 11px; margin-top: 2px;">
-                        <a href="{{ c_lead.facebook_url | external_url }}"
-                           target="_blank"
-                           rel="noopener noreferrer"
-                           class="table-link"
-                           style="color: #2563eb; font-weight: 600;"
-                           onclick="event.stopPropagation()">
-                          📘 Facebook Page ↗
-                        </a>
-                      </div>
-                    {% endif %}
-                    {% if not c_lead.clean_phone and not c_lead.dm_email and not c_lead.generic_email and not c_lead.facebook_url %}
-                      <span style="color: var(--text-muted); font-size: 12px;">No Direct Contact</span>
-                    {% endif %}
-                  </td>
-
-                  <!-- Location / Niche -->
-                  <td>
-                    <div>📍 {{ c_lead.city | default('US') }}</div>
-                    <div style="font-size: 11px; color: var(--text-muted);">{{ c_lead.niche | default('Contractor') }}</div>
-                  </td>
-
-                  <!-- Outreach Notes / Pitch Type -->
-                  <td>
-                    {% if c_lead.message_sent %}
-                      {% set p_type = c_lead.message_sent | lower %}
-                      <div style="margin-bottom: 4px;">
-                        {% if 'curiosity' in p_type %}
-                          <span class="pitch-badge curiosity">🔍 Curiosity</span>
-                        {% elif 'loss' in p_type %}
-                          <span class="pitch-badge loss-aversion">⚠️ Loss Aversion</span>
-                        {% elif 'accusation' in p_type %}
-                          <span class="pitch-badge accusation">🛡️ Accusation</span>
-                        {% elif 'no-oriented' in p_type or 'no_oriented' in p_type or 'no oriented' in p_type %}
-                          <span class="pitch-badge no-oriented">🧠 No-Oriented</span>
-                        {% elif 'contrast' in p_type %}
-                          <span class="pitch-badge local-contrast">📍 Local Contrast</span>
-                        {% elif 'reputation' in p_type or 'dissonance' in p_type %}
-                          <span class="pitch-badge reputation-dissonance">⭐ Reputation</span>
-                        {% elif 'gatekeeper' in p_type %}
-                          <span class="pitch-badge gatekeeper">🚪 Gatekeeper</span>
-                        {% elif 'reciprocity' in p_type %}
-                          <span class="pitch-badge reciprocity">🎁 Reciprocity</span>
-                        {% else %}
-                          <span class="pitch-badge default">📋 {{ c_lead.message_sent }}</span>
-                        {% endif %}
-                      </div>
-                    {% endif %}
-                    {% if c_lead.contact_notes %}
-                      <div class="contact-notes-pill">
-                        <strong>Note:</strong> {{ c_lead.contact_notes }}
-                      </div>
-                    {% elif not c_lead.message_sent %}
-                      <span style="color: var(--text-muted); font-size: 12px;">Logged in queue cockpit</span>
-                    {% endif %}
-                  </td>
-                </tr>
-              {% endfor %}
-            {% else %}
-              <tr>
-                <td colspan="6" style="text-align: center; padding: 40px; color: var(--text-muted);">
-                  <div style="font-size: 32px; margin-bottom: 8px;">📭</div>
-                  <strong>No Contacted Leads Found</strong>
-                  <p style="margin-top: 4px; font-size: 12px;">
-                    {% if search or (current_channel and current_channel != 'all') %}
-                      Try clearing your search query or channel filter.
-                    {% else %}
-                      Triaged and contacted leads from your Daily Queue will appear here.
-                    {% endif %}
-                  </p>
-                </td>
-              </tr>
-            {% endif %}
-          </tbody>
-        </table>
+    <div class="empty-queue-card" style="grid-column: 1 / -1;">
+      <div class="empty-icon">📭</div>
+      <h2>No Contacted Leads Found</h2>
+      <p>No contacted leads match your current filter or search criteria.</p>
+      <div style="margin-top: 16px;">
+        <a href="/" class="btn-action btn-channel" style="text-decoration: none; display: inline-flex;">
+          Go to Daily Queue 🎯
+        </a>
       </div>
-    {% endif %}
-
-    <!-- Footer Stats / Pagination info -->
-    <div style="padding: 14px 20px; border-top: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--text-muted);">
-      <span>Showing {{ contacted_leads | length }} of {{ total_count | default(0) }} contacted leads in archive</span>
-      {% if total_count > contacted_leads | length %}
-        <span>Displaying first {{ contacted_leads | length }} results (use channel tabs or search to narrow)</span>
-      {% endif %}
     </div>
-
+    {% endif %}
   </div>
+</div>
+
+{% else %}
+<!-- Clear CRM Table View with Slide-Over Drawer Integration -->
+<div style="overflow-x: auto;">
+  <table class="crm-table">
+    <thead>
+      <tr>
+        <th style="width: 50px;">ID</th>
+        <th style="width: 26%;">Business & Reputation</th>
+        <th style="width: 18%;">Contact Channel & Time</th>
+        <th style="width: 22%;">Direct Contact Info</th>
+        <th style="width: 14%;">City / Niche</th>
+        <th style="width: 20%;">Outreach Pitch & Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% if contacted_leads %}
+      {% for c_lead in contacted_leads %}
+      <tr class="table-lead-row" id="row-contacted-{{ c_lead.id }}" hx-get="/api/leads/{{ c_lead.id }}/modal"
+        hx-target="#lead-drawer-content" hx-swap="innerHTML" onclick="handleRowClick(event)">
+
+        <!-- ID -->
+        <td style="font-family: monospace; color: var(--text-muted);">#{{ c_lead.id }}</td>
+
+        <!-- Business & Reputation -->
+        <td>
+          <strong style="color: var(--text-primary); font-size: 14px; display: block;">{{ c_lead.business_name
+            }}</strong>
+          <div style="display: flex; align-items: center; gap: 8px; margin-top: 3px;">
+            {% if c_lead.rating and c_lead.rating > 0 %}
+            <span style="font-size: 11px; color: #b45309; font-weight: 600;">★ {{ "%.1f"|format(c_lead.rating) }} ({{
+              c_lead.review_count | default(0) }})</span>
+            {% endif %}
+            {% if c_lead.website_url %}
+            <a href="{{ c_lead.website_url | external_url }}" target="_blank" rel="noopener noreferrer"
+              class="table-link" style="font-size: 11px;" onclick="event.stopPropagation()">
+              🌐 {{ c_lead.clean_domain | default('Visit') }} ↗
+            </a>
+            {% endif %}
+          </div>
+        </td>
+
+        <!-- Channel & Timestamp -->
+        <td>
+          {% set ch = c_lead.last_channel | lower %}
+          {% if ch == 'whatsapp' %}
+          <span class="channel-pill"
+            style="background: rgba(34, 197, 94, 0.15); color: #22c55e; border-color: rgba(34, 197, 94, 0.3); font-weight: 600;">
+            💬 WhatsApp
+          </span>
+          {% elif ch == 'phone' %}
+          <span class="channel-pill"
+            style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; border-color: rgba(59, 130, 246, 0.3); font-weight: 600;">
+            📞 Phone Call
+          </span>
+          {% elif ch == 'email' %}
+          <span class="channel-pill"
+            style="background: rgba(168, 85, 247, 0.15); color: #c084fc; border-color: rgba(168, 85, 247, 0.3); font-weight: 600;">
+            ✉️ Cold Email
+          </span>
+          {% elif ch == 'form' %}
+          <span class="channel-pill"
+            style="background: rgba(245, 158, 11, 0.15); color: #fbbf24; border-color: rgba(245, 158, 11, 0.3); font-weight: 600;">
+            📝 Contact Form
+          </span>
+          {% elif ch == 'facebook' %}
+          <span class="channel-pill"
+            style="background: rgba(37, 99, 235, 0.15); color: #3b82f6; border-color: rgba(37, 99, 235, 0.3); font-weight: 600;">
+            📘 Facebook
+          </span>
+          {% else %}
+          <span class="status-badge contacted">
+            {{ ch | title }}
+          </span>
+          {% endif %}
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
+            ⏱️ {{ c_lead.contacted_at | default(c_lead.updated_at) }}
+          </div>
+        </td>
+
+        <!-- Channel & Timestamp -->
+        <td>
+          {% set ch = c_lead.last_channel | lower %}
+          {% if ch == 'whatsapp' %}
+          <span class="channel-pill"
+            style="background: rgba(34, 197, 94, 0.15); color: #22c55e; border-color: rgba(34, 197, 94, 0.3); font-weight: 600;">
+            💬 WhatsApp
+          </span>
+          {% elif ch == 'phone' %}
+          <span class="channel-pill"
+            style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; border-color: rgba(59, 130, 246, 0.3); font-weight: 600;">
+            📞 Phone Call
+          </span>
+          {% elif ch == 'email' %}
+          <span class="channel-pill"
+            style="background: rgba(168, 85, 247, 0.15); color: #c084fc; border-color: rgba(168, 85, 247, 0.3); font-weight: 600;">
+            ✉️ Cold Email
+          </span>
+          {% elif ch == 'form' %}
+          <span class="channel-pill"
+            style="background: rgba(245, 158, 11, 0.15); color: #fbbf24; border-color: rgba(245, 158, 11, 0.3); font-weight: 600;">
+            📝 Contact Form
+          </span>
+          {% elif ch == 'facebook' %}
+          <span class="channel-pill"
+            style="background: rgba(37, 99, 235, 0.15); color: #3b82f6; border-color: rgba(37, 99, 235, 0.3); font-weight: 600;">
+            📘 Facebook
+          </span>
+          {% else %}
+          <span class="status-badge contacted">
+            {{ ch | title }}
+          </span>
+          {% endif %}
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
+            ⏱️ {{ c_lead.contacted_at | default(c_lead.updated_at) }}
+          </div>
+        </td>
+
+        <!-- Location / Niche -->
+        <td>
+          <div>📍 {{ c_lead.city | default('US') }}</div>
+          <div style="font-size: 11px; color: var(--text-muted);">{{ c_lead.niche | default('Local Business') }}</div>
+        </td>
+
+        <!-- Outreach Notes / Pitch Type -->
+        <td>
+          {% if c_lead.message_sent %}
+          {% set p_type = c_lead.message_sent | lower %}
+          {% set raw_msg = (c_lead.message_sent | default('') | string).strip() %}
+          {% if raw_msg.startswith('[') and ']' in raw_msg %}
+          {% set bracket_end = raw_msg.index(']') %}
+          {% set strategy_tag = raw_msg[1:bracket_end] | lower | trim %}
+          {% set sent_body = raw_msg[bracket_end + 1:] | trim %}
+          {% else %}
+          {% set strategy_tag = '' %}
+          {% set sent_body = raw_msg %}
+          {% endif %}
+          <div style="margin-bottom: 4px;">
+            {% if strategy_tag == 'naive_curiosity' %}
+            <span class="pitch-badge curiosity">🔍 Curiosity</span>
+            {% elif strategy_tag == 'loss_aversion' %}
+            <span class="pitch-badge loss-aversion">⚠️ Loss Aversion</span>
+            {% elif strategy_tag == 'accusation_audit' %}
+            <span class="pitch-badge accusation">🛡️ Accusation</span>
+            {% elif strategy_tag in ['no_oriented', 'no-oriented'] %}
+            <span class="pitch-badge no-oriented">🧠 No-Oriented</span>
+            {% elif strategy_tag == 'local_contrast' %}
+            <span class="pitch-badge local-contrast">📍 Local Contrast</span>
+            {% elif strategy_tag == 'reputation_dissonance' %}
+            <span class="pitch-badge reputation-dissonance">⭐ Reputation</span>
+            {% elif strategy_tag == 'gatekeeper' %}
+            <span class="pitch-badge gatekeeper">🚪 Gatekeeper</span>
+            {% elif strategy_tag == 'reciprocity' %}
+            <span class="pitch-badge reciprocity">🎁 Reciprocity</span>
+            {% elif strategy_tag %}
+            <span class="pitch-badge default">📋 {{ strategy_tag | replace('_', ' ') | title }}</span>
+            {% endif %}
+            {% if sent_body %}
+            <div class="contact-msg-snippet" title="{{ sent_body }}">{{ sent_body }}</div>
+            {% endif %}
+          </div>
+          {% endif %}
+          {% if c_lead.contact_notes %}
+          <div class="contact-notes-pill">
+            <strong>Note:</strong> {{ c_lead.contact_notes }}
+          </div>
+          {% elif not c_lead.message_sent %}
+          <span style="color: var(--text-muted); font-size: 12px;">Logged in queue cockpit</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      {% else %}
+      <tr>
+        <td colspan="6" style="text-align: center; padding: 40px; color: var(--text-muted);">
+          <div style="font-size: 32px; margin-bottom: 8px;">📭</div>
+          <strong>No Contacted Leads Found</strong>
+          <p style="margin-top: 4px; font-size: 12px;">
+            {% if search or (current_channel and current_channel != 'all') %}
+            Try clearing your search query or channel filter.
+            {% else %}
+            Triaged and contacted leads from your Daily Queue will appear here.
+            {% endif %}
+          </p>
+        </td>
+      </tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% set page_size = 50 %}
+{% set total_pages = (((total_count | default(0)) - 1) // page_size + 1) if (total_count | default(0)) > 0 else 1 %}
+<!-- Footer Stats / Pagination info -->
+<div
+  style="padding: 14px 20px; border-top: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--text-muted); flex-wrap: wrap; gap: 10px;">
+  <span>Showing {{ contacted_leads | length }} of {{ total_count | default(0) }} contacted leads in archive</span>
+  <div style="display: flex; align-items: center; gap: 12px;">
+    <span>Page {{ page }} of {{ total_pages }}</span>
+    {% if page > 1 %}
+    <a href="/contacted?channel={{ current_channel | default('all') }}{% if search %}&search={{ search | urlencode }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}&page={{ page - 1 }}"
+      class="btn-action"
+      style="text-decoration: none; padding: 4px 10px; font-size: 12px; background: var(--bg-subtle); border: 1px solid var(--border-color); color: var(--text-primary);">
+      ← Prev
+    </a>
+    {% endif %}
+    {% if page < total_pages %} <a
+      href="/contacted?channel={{ current_channel | default('all') }}{% if search %}&search={{ search | urlencode }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}&page={{ page + 1 }}"
+      class="btn-action"
+      style="text-decoration: none; padding: 4px 10px; font-size: 12px; background: var(--bg-subtle); border: 1px solid var(--border-color); color: var(--text-primary);">
+      Next →
+      </a>
+      {% endif %}
+  </div>
+</div>
+
+</div>
 </div>
 
 <!-- Slide-Over Lead Drawer Inspector -->
@@ -398,43 +430,4 @@
     </div>
   </div>
 </div>
-
-<!-- Drawer Client Script -->
-<script>
-  function openDrawer() {
-    const drawer = document.getElementById('lead-drawer');
-    if (drawer) {
-      drawer.classList.add('open');
-      document.body.style.overflow = 'hidden';
-    }
-  }
-
-  function closeDrawer() {
-    const drawer = document.getElementById('lead-drawer');
-    if (drawer) {
-      drawer.classList.remove('open');
-      document.body.style.overflow = '';
-    }
-  }
-
-  function handleDrawerBackdropClick(e) {
-    if (e.target.id === 'lead-drawer') {
-      closeDrawer();
-    }
-  }
-
-  function handleRowClick(e) {
-    // If user clicked a direct link or button inside the row, don't trigger the drawer
-    if (e.target.closest('a') || e.target.closest('button')) {
-      return;
-    }
-    openDrawer();
-  }
-
-  document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') {
-      closeDrawer();
-    }
-  });
-</script>
 {% endblock %}

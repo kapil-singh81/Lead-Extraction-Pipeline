@@ -11,25 +11,37 @@
     <div class="table-filter-bar">
       <!-- Status Tabs -->
       <div class="status-tabs">
-        <a href="/leads?status=all{% if search %}&search={{ search }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
+        <a href="/leads?status=all{% if current_channel and current_channel != 'all' %}&channel={{ current_channel }}{% endif %}{% if flaw_type %}&flaw_type={{ flaw_type }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}{% if search %}&search={{ search | urlencode }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
            class="tab-btn {% if current_status == 'all' or not current_status %}active{% endif %}">
           All ({{ stats.total | default(0) }})
         </a>
-        <a href="/leads?status=outreach_ready{% if search %}&search={{ search }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
+        <a href="/leads?status=outreach_ready{% if current_channel and current_channel != 'all' %}&channel={{ current_channel }}{% endif %}{% if flaw_type %}&flaw_type={{ flaw_type }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}{% if search %}&search={{ search | urlencode }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
            class="tab-btn {% if current_status == 'outreach_ready' %}active{% endif %}">
           Outreach Ready ({{ stats.outreach_ready | default(0) }})
         </a>
-        <a href="/leads?status=missing_info{% if search %}&search={{ search }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
-           class="tab-btn {% if current_status == 'missing_info' %}active{% endif %}">
-          Missing Info ({{ stats.missing_info | default(0) }})
-        </a>
-        <a href="/leads?status=contacted{% if search %}&search={{ search }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
+        <a href="/leads?status=contacted{% if current_channel and current_channel != 'all' %}&channel={{ current_channel }}{% endif %}{% if flaw_type %}&flaw_type={{ flaw_type }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}{% if search %}&search={{ search | urlencode }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
            class="tab-btn {% if current_status == 'contacted' %}active{% endif %}">
           Contacted ({{ stats.contacted | default(0) }})
         </a>
-        <a href="/leads?status=disqualified{% if search %}&search={{ search }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
+        <a href="/leads?status=replied{% if current_channel and current_channel != 'all' %}&channel={{ current_channel }}{% endif %}{% if flaw_type %}&flaw_type={{ flaw_type }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}{% if search %}&search={{ search | urlencode }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
+           class="tab-btn {% if current_status == 'replied' %}active{% endif %}">
+          Replied ({{ stats.replied | default(0) }})
+        </a>
+        <a href="/leads?status=deferred{% if current_channel and current_channel != 'all' %}&channel={{ current_channel }}{% endif %}{% if flaw_type %}&flaw_type={{ flaw_type }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}{% if search %}&search={{ search | urlencode }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
+           class="tab-btn {% if current_status == 'deferred' %}active{% endif %}">
+          Deferred ({{ stats.deferred | default(0) }})
+        </a>
+        <a href="/leads?status=missing_info{% if current_channel and current_channel != 'all' %}&channel={{ current_channel }}{% endif %}{% if flaw_type %}&flaw_type={{ flaw_type }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}{% if search %}&search={{ search | urlencode }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
+           class="tab-btn {% if current_status == 'missing_info' %}active{% endif %}">
+          Missing Info ({{ stats.missing_info | default(0) }})
+        </a>
+        <a href="/leads?status=disqualified{% if current_channel and current_channel != 'all' %}&channel={{ current_channel }}{% endif %}{% if flaw_type %}&flaw_type={{ flaw_type }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}{% if search %}&search={{ search | urlencode }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
            class="tab-btn {% if current_status == 'disqualified' %}active{% endif %}">
           Disqualified ({{ stats.disqualified | default(0) }})
+        </a>
+        <a href="/leads?status=new{% if current_channel and current_channel != 'all' %}&channel={{ current_channel }}{% endif %}{% if flaw_type %}&flaw_type={{ flaw_type }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}{% if search %}&search={{ search | urlencode }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}"
+           class="tab-btn {% if current_status == 'new' %}active{% endif %}">
+          New ({{ stats.new | default(0) }})
         </a>
       </div>
 
@@ -39,6 +51,12 @@
         <form method="GET" action="/leads" style="display: flex; gap: 8px;">
           {% if current_status %}
             <input type="hidden" name="status" value="{{ current_status }}">
+          {% endif %}
+          {% if flaw_type %}
+            <input type="hidden" name="flaw_type" value="{{ flaw_type }}">
+          {% endif %}
+          {% if min_rating %}
+            <input type="hidden" name="min_rating" value="{{ min_rating }}">
           {% endif %}
           {% if view_mode %}
             <input type="hidden" name="view" value="{{ view_mode }}">
@@ -59,7 +77,7 @@
             Filter
           </button>
           {% if search %}
-            <a href="/leads?status={{ current_status | default('all') }}&view={{ view_mode | default('table') }}"
+            <a href="/leads?status={{ current_status | default('all') }}{% if current_channel and current_channel != 'all' %}&channel={{ current_channel }}{% endif %}{% if flaw_type %}&flaw_type={{ flaw_type }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}&view={{ view_mode | default('table') }}"
                class="btn-action"
                style="text-decoration: none; background: transparent; border: 1px solid var(--border-color); color: var(--text-muted);">
               Clear
@@ -69,12 +87,12 @@
 
         <!-- View Switcher -->
         <div class="view-toggle-bar">
-          <a href="/leads?status={{ current_status | default('all') }}{% if search %}&search={{ search }}{% endif %}&view=table"
+          <a href="/leads?status={{ current_status | default('all') }}{% if current_channel and current_channel != 'all' %}&channel={{ current_channel }}{% endif %}{% if flaw_type %}&flaw_type={{ flaw_type }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}{% if search %}&search={{ search | urlencode }}{% endif %}{% if page and page > 1 %}&page={{ page }}{% endif %}&view=table"
              class="view-toggle-btn {% if view_mode != 'grid' %}active{% endif %}"
              title="Switch to compact tabular view">
             <span>☰</span> Table View
           </a>
-          <a href="/leads?status={{ current_status | default('all') }}{% if search %}&search={{ search }}{% endif %}&view=grid"
+          <a href="/leads?status={{ current_status | default('all') }}{% if current_channel and current_channel != 'all' %}&channel={{ current_channel }}{% endif %}{% if flaw_type %}&flaw_type={{ flaw_type }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}{% if search %}&search={{ search | urlencode }}{% endif %}{% if page and page > 1 %}&page={{ page }}{% endif %}&view=grid"
              class="view-toggle-btn {% if view_mode == 'grid' %}active{% endif %}"
              title="Switch to detailed cards grid view">
             <span>▦</span> Cards Grid
@@ -105,6 +123,7 @@
                   </div>
                 </div>
                 {% set lead = grid_lead %}
+                {% set in_grid = true %}
                 {% include "partials/lead_card.html" %}
               </div>
             {% endfor %}
@@ -206,6 +225,18 @@
                         </a>
                       </div>
                     {% endif %}
+                    {% if lead.instagram_url %}
+                      <div style="font-size: 12px; margin-top: 2px;">
+                        <a href="{{ lead.instagram_url | external_url }}"
+                           target="_blank"
+                           rel="noopener noreferrer"
+                           class="table-link"
+                           style="color: #e1306c; font-weight: 600;"
+                           onclick="event.stopPropagation()">
+                          📸 Instagram
+                        </a>
+                      </div>
+                    {% endif %}
                     {% if lead.dm_email or lead.generic_email %}
                       <div style="font-size: 12px;">
                         <a href="mailto:{{ lead.dm_email | default(lead.generic_email) }}"
@@ -215,7 +246,19 @@
                         </a>
                       </div>
                     {% endif %}
-                    {% if not lead.clean_phone and not lead.dm_email and not lead.generic_email %}
+                    {% if lead.form_url %}
+                      <div style="font-size: 12px; margin-top: 2px;">
+                        <a href="{{ lead.form_url | external_url }}"
+                           target="_blank"
+                           rel="noopener noreferrer"
+                           class="table-link"
+                           style="color: #d97706; font-weight: 600;"
+                           onclick="event.stopPropagation()">
+                          📝 Form
+                        </a>
+                      </div>
+                    {% endif %}
+                    {% if not lead.clean_phone and not lead.dm_email and not lead.generic_email and not lead.whatsapp_url and not lead.facebook_url and not lead.instagram_url and not lead.form_url and not lead.dm_linkedin %}
                       <span style="color: var(--text-muted); font-size: 12px;">No Direct Contact</span>
                     {% endif %}
                   </td>
@@ -243,12 +286,28 @@
       </div>
     {% endif %}
 
+    {% set page_size = 50 %}
+    {% set total_pages = (((total_count | default(0)) - 1) // page_size + 1) if (total_count | default(0)) > 0 else 1 %}
     <!-- Footer Stats / Pagination info -->
-    <div style="padding: 14px 20px; border-top: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--text-muted);">
+    <div style="padding: 14px 20px; border-top: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--text-muted); flex-wrap: wrap; gap: 10px;">
       <span>Showing {{ leads | length }} of {{ total_count | default(0) }} leads in archive</span>
-      {% if total_count > leads | length %}
-        <span>Displaying first {{ leads | length }} results (use status tabs or search to narrow)</span>
-      {% endif %}
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <span>Page {{ page }} of {{ total_pages }}</span>
+        {% if page > 1 %}
+          <a href="/leads?status={{ current_status | default('all') }}{% if current_channel and current_channel != 'all' %}&channel={{ current_channel }}{% endif %}{% if flaw_type %}&flaw_type={{ flaw_type }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}{% if search %}&search={{ search | urlencode }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}&page={{ page - 1 }}"
+             class="btn-action"
+             style="text-decoration: none; padding: 4px 10px; font-size: 12px; background: var(--bg-subtle); border: 1px solid var(--border-color); color: var(--text-primary);">
+            ← Prev
+          </a>
+        {% endif %}
+        {% if page < total_pages %}
+          <a href="/leads?status={{ current_status | default('all') }}{% if current_channel and current_channel != 'all' %}&channel={{ current_channel }}{% endif %}{% if flaw_type %}&flaw_type={{ flaw_type }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}{% if search %}&search={{ search | urlencode }}{% endif %}{% if view_mode %}&view={{ view_mode }}{% endif %}&page={{ page + 1 }}"
+             class="btn-action"
+             style="text-decoration: none; padding: 4px 10px; font-size: 12px; background: var(--bg-subtle); border: 1px solid var(--border-color); color: var(--text-primary);">
+            Next →
+          </a>
+        {% endif %}
+      </div>
     </div>
   </div>
 </div>
@@ -264,43 +323,4 @@
     </div>
   </div>
 </div>
-
-<!-- Drawer Client Script -->
-<script>
-  function openDrawer() {
-    const drawer = document.getElementById('lead-drawer');
-    if (drawer) {
-      drawer.classList.add('open');
-      document.body.style.overflow = 'hidden';
-    }
-  }
-
-  function closeDrawer() {
-    const drawer = document.getElementById('lead-drawer');
-    if (drawer) {
-      drawer.classList.remove('open');
-      document.body.style.overflow = '';
-    }
-  }
-
-  function handleDrawerBackdropClick(e) {
-    if (e.target.id === 'lead-drawer') {
-      closeDrawer();
-    }
-  }
-
-  function handleRowClick(e) {
-    // If user clicked a direct link or button inside the row, don't trigger the drawer
-    if (e.target.closest('a') || e.target.closest('button')) {
-      return;
-    }
-    openDrawer();
-  }
-
-  document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') {
-      closeDrawer();
-    }
-  });
-</script>
 {% endblock %}

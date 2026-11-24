@@ -20,7 +20,7 @@
       }
     })();
   </script>
-  <link rel="stylesheet" href="/static/style.css?v=20261123_contacted_v1">
+  <link rel="stylesheet" href="/static/style.css">
   <script src="/static/htmx.min.js"></script>
 </head>
 <body>
@@ -97,7 +97,8 @@
               <div class="progress-sub">{{ remaining_quota | default(0) }} Remaining</div>
             </div>
             <div class="progress-bar-bg">
-              {% set pct = [((done_today | default(0)) / (daily_queue_size | default(35)) * 100) | round | int, 100] | min %}
+              {% set q_size = daily_queue_size | default(35) %}
+              {% set pct = [((done_today | default(0)) / q_size * 100) | round | int, 100] | min if q_size > 0 else 100 %}
               <div class="progress-bar-fill" style="width: {{ pct }}%;"></div>
             </div>
           </div>
@@ -172,22 +173,6 @@
       if (drawerInputEl) drawerInputEl.value = approachKey;
     }
 
-    function getTrackedPitch(leadId) {
-      var cleanId = String(leadId).replace(/^drawer-/, '');
-      var inputEl = document.getElementById('tracked-pitch-' + cleanId);
-      if (inputEl && inputEl.value) return inputEl.value;
-      var drawerInputEl = document.getElementById('tracked-pitch-drawer-' + cleanId);
-      if (drawerInputEl && drawerInputEl.value) return drawerInputEl.value;
-      if (window.leadTrackedApproaches && window.leadTrackedApproaches[cleanId]) {
-        return window.leadTrackedApproaches[cleanId];
-      }
-      try {
-        var stored = localStorage.getItem('tracked_pitch_' + cleanId);
-        if (stored) return stored;
-      } catch (e) {}
-      return 'naive_curiosity';
-    }
-
     function getPitchesData(leadId) {
       var dataScript = document.getElementById('pitches-data-' + leadId);
       if (!dataScript) {
@@ -221,6 +206,14 @@
       });
     }
 
+    function updatePitchWordCount(leadId, text) {
+      var countEl = document.getElementById('pitch-word-count-' + leadId);
+      if (!countEl) return;
+      var trimmed = (text || '').trim();
+      var words = trimmed ? trimmed.split(/\s+/).length : 0;
+      countEl.textContent = words + ' words • Zero Links';
+    }
+
     function handleSlotTabClick(leadId, slotId) {
       var data = getPitchesData(leadId);
       if (!data || !data.slots || !data.slots[slotId]) return;
@@ -251,6 +244,7 @@
 
       // Update dynamic WhatsApp link
       updateWhatsAppUrl(leadId, data.digits, approach.text, approach.title);
+      updatePitchWordCount(leadId, approach.text);
     }
 
     function handleSlotSwapClick(leadId, slotId, event) {
@@ -303,6 +297,7 @@
       }
 
       updateWhatsAppUrl(leadId, data.digits, approach.text, approach.title);
+      updatePitchWordCount(leadId, approach.text);
     }
 
     function copyActivePitchToClipboard(leadId, btnElement) {
@@ -338,6 +333,7 @@
       var digits = textareaEl.getAttribute('data-digits');
       var text = textareaEl.value;
       updateWhatsAppUrl(leadId, digits, text, 'Customized');
+      updatePitchWordCount(leadId, text);
     }
 
     function syncActiveTextareaToWa(btn, leadId) {
@@ -351,34 +347,6 @@
         btn.href = 'https://wa.me/' + digits + (textarea.value ? '?text=' + encodeURIComponent(textarea.value) : '');
       }
       return true;
-    }
-
-    function copyPitchToClipboard(textElementId, btnElement, leadId, approachKey) {
-      var textEl = document.getElementById(textElementId);
-      if (!textEl) return;
-      var text = (textEl.value !== undefined ? textEl.value : textEl.innerText).trim();
-
-      if (leadId && approachKey) {
-        setTrackedPitch(leadId, approachKey);
-        var cleanId = String(leadId).replace(/^drawer-/, '');
-        try {
-          fetch('/api/leads/' + cleanId + '/track-pitch', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'pitch_type=' + encodeURIComponent(approachKey)
-          }).catch(function() {});
-        } catch (e) {}
-      }
-
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(function() {
-          showCopySuccess(btnElement);
-        }).catch(function() {
-          fallbackCopyText(text, btnElement);
-        });
-      } else {
-        fallbackCopyText(text, btnElement);
-      }
     }
 
     function fallbackCopyText(text, btnElement) {
@@ -409,6 +377,158 @@
         btnElement.classList.remove('copied');
         btnElement.setAttribute('title', 'Copy pitch to clipboard');
       }, 1400);
+    }
+
+    // Drawer Client Management
+    function openDrawer() {
+      const content = document.getElementById('lead-drawer-content');
+      if (content) {
+        content.innerHTML = '<div style="padding: 48px; text-align: center; color: var(--text-muted);"><div style="font-size: 28px; margin-bottom: 8px;">⏳</div><div>Loading complete lead data...</div></div>';
+      }
+      const drawer = document.getElementById('lead-drawer');
+      if (drawer) {
+        drawer.classList.add('open');
+        document.body.style.overflow = 'hidden';
+      }
+    }
+
+    function closeDrawer() {
+      const drawer = document.getElementById('lead-drawer');
+      if (drawer) {
+        drawer.classList.remove('open');
+        document.body.style.overflow = '';
+      }
+    }
+
+    function handleDrawerBackdropClick(e) {
+      if (e.target.id === 'lead-drawer') {
+        closeDrawer();
+      }
+    }
+
+    function handleRowClick(e) {
+      // If user clicked a direct link or button inside the row, don't trigger the drawer
+      if (e.target.closest('a') || e.target.closest('button')) {
+        return;
+      }
+      openDrawer();
+    }
+
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') {
+        closeDrawer();
+      }
+    });
+
+    // Lead Card & Drawer Edit & Action Helpers
+    function toggleLeadEdit(id) {
+      const panel = document.getElementById('edit-panel-' + id);
+      const viewContent = document.getElementById('card-view-content-' + id);
+      const triggerBtn = document.getElementById('btn-edit-trigger-' + id);
+      if (panel) {
+        const isHidden = (panel.style.display === 'none' || !panel.style.display);
+        panel.style.display = isHidden ? 'block' : 'none';
+        if (viewContent) {
+          viewContent.style.display = isHidden ? 'none' : 'block';
+        }
+        if (triggerBtn) {
+          triggerBtn.innerHTML = isHidden ? '<span>✕</span>' : '<span>✏️</span>';
+          triggerBtn.setAttribute('title', isHidden ? 'Close edit' : 'Edit business details');
+          triggerBtn.classList.toggle('active', isHidden);
+        }
+        if (isHidden) {
+          panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }
+    }
+
+    function toggleAddChannelPrompt(id) {
+      const box = document.getElementById('add-channel-box-' + id);
+      if (box) {
+        box.style.display = (box.style.display === 'none' || !box.style.display) ? 'block' : 'none';
+      }
+    }
+
+    function submitStatusAction(leadId, stay, inGrid) {
+      const chEl = document.getElementById('sel-channel-' + leadId);
+      const actEl = document.getElementById('sel-status-' + leadId);
+      const outEl = document.getElementById('sel-outcome-' + leadId);
+      const notesEl = document.getElementById('txt-notes-' + leadId);
+      const pitchTypeEl = document.getElementById('tracked-pitch-' + leadId);
+      const textareaEl = document.getElementById('pitch-textarea-' + leadId);
+
+      const ch = chEl ? chEl.value : 'phone';
+      const act = actEl ? actEl.value : 'contacted';
+      const outcome = outEl ? outEl.value : 'sent';
+      const notes = notesEl ? notesEl.value : '';
+      const pitchType = pitchTypeEl ? pitchTypeEl.value : 'naive_curiosity';
+      const msgText = textareaEl ? textareaEl.value : '';
+
+      const targetSelector = (stay || inGrid) ? ('#lead-card-' + leadId) : '#queue-card-container';
+      const swapMode = (stay || inGrid) ? 'outerHTML' : 'innerHTML';
+
+      const vals = {
+        action: act,
+        channel: ch,
+        outcome: outcome,
+        notes: notes,
+        stay: stay ? 'true' : 'false',
+        pitch_type: pitchType,
+        message_text: msgText
+      };
+      if (inGrid) {
+        vals.in_grid = 'true';
+      }
+
+      htmx.ajax('POST', '/api/leads/' + leadId + '/action', {
+        target: targetSelector,
+        swap: swapMode,
+        values: vals
+      });
+    }
+
+    function toggleDrawerEdit(id) {
+      const panel = document.getElementById('drawer-edit-panel-' + id);
+      const viewContent = document.getElementById('drawer-view-content-' + id);
+      const triggerBtn = document.getElementById('btn-drawer-edit-trigger-' + id);
+      if (panel) {
+        const isHidden = (panel.style.display === 'none' || !panel.style.display);
+        panel.style.display = isHidden ? 'block' : 'none';
+        if (viewContent) {
+          viewContent.style.display = isHidden ? 'none' : 'block';
+        }
+        if (triggerBtn) {
+          triggerBtn.innerHTML = isHidden ? '<span>✕</span>' : '<span>✏️</span>';
+          triggerBtn.setAttribute('title', isHidden ? 'Close edit' : 'Edit business details');
+          triggerBtn.classList.toggle('active', isHidden);
+        }
+        if (isHidden) {
+          panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }
+    }
+
+    function toggleDrawerAddChannelPrompt(id) {
+      const box = document.getElementById('add-drawer-channel-box-' + id);
+      if (box) {
+        box.style.display = (box.style.display === 'none' || !box.style.display) ? 'block' : 'none';
+      }
+    }
+
+    if (!window._drawerSyncAttached) {
+      window._drawerSyncAttached = true;
+      document.addEventListener('htmx:afterRequest', function (evt) {
+        if (evt.detail && evt.detail.successful && evt.detail.requestConfig && evt.detail.requestConfig.verb === 'post') {
+          const target = evt.detail.target;
+          if (target && (target.id === 'lead-drawer-content' || target.closest('#lead-drawer-content'))) {
+            if (typeof htmx !== 'undefined') {
+              const currentUrl = window.location.pathname + window.location.search;
+              htmx.ajax('GET', currentUrl, { target: '.content-container', select: '.content-container', swap: 'outerHTML' });
+              htmx.ajax('GET', currentUrl, { target: '#sidebar-counts', select: '#sidebar-counts', swap: 'outerHTML' });
+            }
+          }
+        }
+      });
     }
   </script>
 </body>

@@ -6,6 +6,8 @@
 </div>
 
 {% if queue_leads is defined %}
+<strong id="queue-toolbar-count" hx-swap-oob="true">{{ queue_leads | length }}</strong>
+<span id="queue-nav-count" class="badge-mini" hx-swap-oob="true">{{ queue_leads | length }}</span>
 <div id="queue-tiles-container" hx-swap-oob="true" class="queue-tiles-scroll-box">
   {% include "partials/queue_tiles.html" %}
 </div>
@@ -18,7 +20,8 @@
       <div class="progress-sub">{{ remaining_quota | default(0) }} Remaining</div>
     </div>
     <div class="progress-bar-bg">
-      {% set pct = [((done_today | default(0)) / (daily_queue_size | default(35)) * 100) | round | int, 100] | min %}
+      {% set q_size = daily_queue_size | default(35) %}
+      {% set pct = [((done_today | default(0)) / q_size * 100) | round | int, 100] | min if q_size > 0 else 100 %}
       <div class="progress-bar-fill" style="width: {{ pct }}%;"></div>
     </div>
   </div>

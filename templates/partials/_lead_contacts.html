@@ -1,0 +1,160 @@
+{% set is_drawer = is_drawer | default(false) %}
+<!-- Actionable Contacts (Shared between Card and Drawer) -->
+<div class="contacts-section">
+  <div class="section-label">
+    <span>📞</span> Actionable Contact Info
+  </div>
+
+  <div class="contacts-grid">
+    <!-- Phone -->
+    <div class="contact-card">
+      <span class="contact-channel">Phone</span>
+      <span class="contact-val">
+        {% if lead.clean_phone or lead.phone %}
+        <a href="tel:{{ lead.clean_phone | default(lead.phone) }}">
+          {{ lead.clean_phone | default(lead.phone) }}
+        </a>
+        <span class="line-tag">{{ lead.line_type | default('Local') }}</span>
+        {% else %}
+        <span style="color: #94a3b8;">Not Available</span>
+        {% endif %}
+      </span>
+    </div>
+
+    <!-- Decision Maker -->
+    <div class="contact-card">
+      <span class="contact-channel">Decision Maker</span>
+      <span class="contact-val">
+        {% if lead.dm_name %}
+        {{ lead.dm_name }} {% if lead.dm_title %}<small style="color: #64748b;">({{ lead.dm_title }})</small>{% endif %}
+        {% if lead.dm_linkedin %}
+        <a href="{{ lead.dm_linkedin | external_url }}" target="_blank" rel="noopener noreferrer" style="margin-left: 4px;">[LinkedIn]</a>
+        {% endif %}
+        {% else %}
+        <span style="color: #94a3b8;">Unlisted</span>
+        {% endif %}
+      </span>
+    </div>
+
+    <!-- Email -->
+    <div class="contact-card">
+      <span class="contact-channel">Email Address</span>
+      <span class="contact-val">
+        {% if lead.dm_email %}
+        <a href="mailto:{{ lead.dm_email }}">{{ lead.dm_email }}</a> <small>(Direct)</small>
+        {% elif lead.generic_email %}
+        <a href="mailto:{{ lead.generic_email }}">{{ lead.generic_email }}</a> <small>(General)</small>
+        {% else %}
+        <span style="color: #94a3b8;">Not Found</span>
+        {% endif %}
+      </span>
+    </div>
+
+    <!-- Digital Channels -->
+    <div class="contact-card" style="grid-column: span 2; position: relative;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+        <span class="contact-channel">Digital Web Channels</span>
+        <button type="button" class="btn-add-channel-plus"
+          onclick="{% if is_drawer %}toggleDrawerAddChannelPrompt('{{ lead.id }}'){% else %}toggleAddChannelPrompt('{{ lead.id }}'){% endif %}"
+          title="Add new digital web channel (+)"
+          style="width: 20px; height: 20px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary); font-size: 13px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; line-height: 1;">
+          +
+        </button>
+      </div>
+
+      <!-- Inline Add Digital Channel Input Box (Toggled by + sign) -->
+      <div id="{% if is_drawer %}add-drawer-channel-box-{{ lead.id }}{% else %}add-channel-box-{{ lead.id }}{% endif %}"
+        style="display: none; margin: 8px 0; padding: 8px 10px; background: var(--bg-subtle); border: 1px solid var(--border-color); border-radius: 6px;">
+        <form hx-post="/api/leads/{{ lead.id }}/add-channel"
+          hx-target="{% if is_drawer %}#lead-drawer-content{% else %}#lead-card-{{ lead.id }}{% endif %}"
+          hx-swap="{% if is_drawer %}innerHTML{% else %}outerHTML{% endif %}"
+          style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+          {% if is_drawer %}
+          <input type="hidden" name="source" value="drawer">
+          {% endif %}
+          <select name="channel_type"
+            style="padding: 4px 6px; font-size: 11px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary);">
+            <option value="facebook">📘 Facebook</option>
+            <option value="instagram">📸 Instagram</option>
+            <option value="linkedin">💼 LinkedIn</option>
+            <option value="twitter">🐦 X/Twitter</option>
+            <option value="form">📝 Contact Form</option>
+            <option value="whatsapp">💬 WhatsApp</option>
+            <option value="custom">🌐 Custom Link</option>
+          </select>
+          <input type="text" name="channel_url" placeholder="https://... URL" required
+            style="flex: 1; min-width: 140px; padding: 4px 6px; font-size: 11px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary);">
+          <button type="submit" class="btn-action"
+            style="padding: 4px 8px; font-size: 11px; background: #2563eb; color: #fff; border: none; border-radius: 4px; cursor: pointer;">Add</button>
+          <button type="button"
+            onclick="{% if is_drawer %}toggleDrawerAddChannelPrompt('{{ lead.id }}'){% else %}toggleAddChannelPrompt('{{ lead.id }}'){% endif %}"
+            style="padding: 4px 6px; font-size: 11px; background: transparent; border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-muted); cursor: pointer;">✕</button>
+        </form>
+      </div>
+
+      <span class="contact-val"
+        style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 4px;">
+        {% if lead.whatsapp_url %}
+        <span class="wa-channel-pill-group" style="display: inline-flex; align-items: center; gap: 4px;">
+          <a href="{{ lead.whatsapp_url | external_url }}" target="_blank" rel="noopener noreferrer" class="mini-chip web"
+            style="text-decoration: none; font-size: 11px; background: #dcfce7; color: #15803d; font-weight: 600;">💬
+            WhatsApp ↗</a>
+          <button type="button" class="btn-wa-toggle remove"
+            hx-post="/api/leads/{{ lead.id }}/toggle-whatsapp{% if is_drawer %}?source=drawer{% endif %}"
+            hx-target="{% if is_drawer %}#lead-drawer-content{% else %}#lead-card-{{ lead.id }}{% endif %}"
+            hx-swap="{% if is_drawer %}innerHTML{% else %}outerHTML{% endif %}"
+            title="Remove WhatsApp as an active channel">✕</button>
+        </span>
+        {% else %}
+        <!-- Option to click and add WhatsApp as a channel -->
+        <button type="button" class="btn-wa-toggle add"
+          hx-post="/api/leads/{{ lead.id }}/toggle-whatsapp{% if is_drawer %}?source=drawer{% endif %}"
+          hx-target="{% if is_drawer %}#lead-drawer-content{% else %}#lead-card-{{ lead.id }}{% endif %}"
+          hx-swap="{% if is_drawer %}innerHTML{% else %}outerHTML{% endif %}"
+          title="Click to add WhatsApp as an outreach channel using business phone">
+          <span>+ WhatsApp</span>
+        </button>
+        {% endif %}
+        {% if lead.form_url %}
+        <a href="{{ lead.form_url | external_url }}" target="_blank" rel="noopener noreferrer" class="mini-chip web"
+          style="text-decoration: none; font-size: 11px;">📝 Contact Page ↗</a>
+        {% endif %}
+        {% if lead.facebook_url %}
+        <a href="{{ lead.facebook_url | external_url }}" target="_blank" rel="noopener noreferrer" class="mini-chip web"
+          style="text-decoration: none; font-size: 11px; background: #eff6ff; color: #1e40af;">📘 Facebook ↗</a>
+        {% endif %}
+        {% if lead.instagram_url %}
+        <a href="{{ lead.instagram_url | external_url }}" target="_blank" rel="noopener noreferrer" class="mini-chip web"
+          style="text-decoration: none; font-size: 11px; background: #fdf2f8; color: #be185d;">📸 Instagram ↗</a>
+        {% endif %}
+        {% set yt_url = lead.youtube_url or (lead.audit and lead.audit.youtube_url) %}
+        {% if yt_url %}
+        <a href="{{ yt_url | external_url }}" target="_blank" rel="noopener noreferrer" class="mini-chip web"
+          style="text-decoration: none; font-size: 11px; background: #fef2f2; color: #b91c1c;">▶️ YouTube ↗</a>
+        {% endif %}
+        {% if lead.dm_linkedin %}
+        <a href="{{ lead.dm_linkedin | external_url }}" target="_blank" rel="noopener noreferrer" class="mini-chip web"
+          style="text-decoration: none; font-size: 11px; background: #f0fdfa; color: #0f766e;">💼 LinkedIn ↗</a>
+        {% elif lead.audit and lead.audit.linkedin_url %}
+        <a href="{{ lead.audit.linkedin_url | external_url }}" target="_blank" rel="noopener noreferrer" class="mini-chip web"
+          style="text-decoration: none; font-size: 11px; background: #f0fdfa; color: #0f766e;">💼 LinkedIn ↗</a>
+        {% endif %}
+        {% if lead.audit and lead.audit.twitter_url %}
+        <a href="{{ lead.audit.twitter_url | external_url }}" target="_blank" rel="noopener noreferrer" class="mini-chip web"
+          style="text-decoration: none; font-size: 11px; background: #f8fafc; color: #0f172a;">🐦 X/Twitter ↗</a>
+        {% endif %}
+        {% if lead.audit and lead.audit.custom_channels %}
+        {% for c_name, c_url in lead.audit.custom_channels.items() %}
+        <a href="{{ c_url | external_url }}" target="_blank" rel="noopener noreferrer" class="mini-chip web"
+          style="text-decoration: none; font-size: 11px; background: #f1f5f9; color: #334155;">🌐 {{ c_name | title }} ↗</a>
+        {% endfor %}
+        {% endif %}
+        {% if not lead.whatsapp_url and not lead.form_url and not lead.facebook_url and not lead.instagram_url and
+        not yt_url and not lead.dm_linkedin and not (lead.audit and (lead.audit.linkedin_url or lead.audit.twitter_url or
+        lead.audit.custom_channels)) %}
+        <span style="color: #94a3b8; font-size: 12px;">None Found</span>
+        {% endif %}
+      </span>
+    </div>
+  </div>
+</div>

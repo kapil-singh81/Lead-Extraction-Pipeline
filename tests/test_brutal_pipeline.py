@@ -474,7 +474,12 @@ def test_whatsapp_sync_brutal():
         history = database.get_lead_outreach_history(lead_id, db_path=BRUTAL_DB)
         assert len(history) == 1
         assert history[0]["channel"] == "whatsapp"
-        assert any(k in history[0]["message_sent"] for k in ["naive_curiosity", "Curiosity", "Loss Aversion", "No-Oriented", "Reputation Dissonance", "WhatsApp"])
+        assert any(k in history[0]["message_sent"] for k in [
+            "naive_curiosity", "Curiosity", "loss_aversion", "Loss Aversion",
+            "no_oriented", "No-Oriented", "reputation_dissonance", "Reputation",
+            "accusation_audit", "Accusation", "local_contrast", "Local Contrast",
+            "gatekeeper", "Gatekeeper", "reciprocity", "Reciprocity", "WhatsApp"
+        ])
     finally:
         dashboard.load_config = orig_load_config
         clean_db()

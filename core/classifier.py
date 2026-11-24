@@ -20,7 +20,8 @@ def sanitize_email(val: Any) -> Optional[str]:
     if not s:
         return None
     clean = s.lower()
-    if EMAIL_REGEX.match(clean) and not any(clean.endswith(ext) for ext in (".png", ".jpg", ".webp", ".js", ".css")):
+    bad_extensions = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".css", ".js")
+    if EMAIL_REGEX.match(clean) and not clean.endswith(bad_extensions):
         return clean
     return None
 
@@ -47,6 +48,82 @@ def sanitize_phone(val: Any, min_digits: int = 10) -> Optional[str]:
     return None
 
 
+def _has_verified_whatsapp(lead: Dict[str, Any], audit_data: Dict[str, Any]) -> bool:
+    """
+    Returns True ONLY if WhatsApp is verified on-site (widget or link) or verified via CRM/manual lead entry.
+    Strictly returns False if the WhatsApp source is NANPA mobile_registry fallback.
+    """
+    wa_src = (audit_data.get("whatsapp_source") or lead.get("whatsapp_source") or "").strip().lower()
+    if wa_src == "mobile_registry":
+        return False
+    if bool(audit_data.get("is_whatsapp_active")):
+        return True
+    lead_wa = sanitize_url(lead.get("whatsapp_url"))
+    if lead_wa and audit_data.get("is_whatsapp_active") is not False:
+        return True
+    return False
+
+
+def _calculate_contact_and_review_bonuses(lead: Dict[str, Any], audit_data: Dict[str, Any], config: Dict[str, Any]) -> float:
+    """
+    Computes verified contact bonuses (email, mobile phone / toll-free penalty, verified WhatsApp)
+    and capped review authority bonus.
+    """
+    queue_cfg = config.get("queue", {})
+    weights = queue_cfg.get("ranking_weights", {})
+    base_scores = queue_cfg.get("base_scores", {})
+    bonus = 0.0
+
+    # 1. Verified contact bonuses
+    dm_email = sanitize_email(lead.get("dm_email"))
+    generic_email = sanitize_email(lead.get("generic_email"))
+    if dm_email or generic_email:
+        bonus += weights.get("has_email_bonus", 2.0)
+
+    line_type = sanitize_text(lead.get("line_type")) or "Unknown"
+    if line_type == "Mobile":
+        bonus += weights.get("has_mobile_phone_bonus", 1.5)
+    elif line_type == "Toll-Free":
+        bonus += base_scores.get("toll_free_penalty", -3.0)
+
+    # WhatsApp availability bonus (strictly verified on-site or verified channel)
+    if _has_verified_whatsapp(lead, audit_data):
+        bonus += weights.get("has_whatsapp_bonus", 1.5)
+
+    # 2. Established review authority bonus
+    try:
+        rev_count = int(lead.get("review_count") or 0)
+    except (ValueError, TypeError):
+        rev_count = 0
+    max_bonus = base_scores.get("max_review_bonus", 5.0)
+    bonus += min(max_bonus, rev_count * weights.get("review_count_factor", 0.02))
+
+    return bonus
+
+
+def _primary_channel_label(
+    dm_email: Optional[str],
+    generic_email: Optional[str],
+    wa_url: Optional[str],
+    phone_actionable: bool,
+    fb_url: Optional[str],
+    ig_url: Optional[str]
+) -> str:
+    """
+    Determines the primary communication channel label for human outreach queues.
+    Hierarchy: Email -> WhatsApp -> Phone -> Social -> Web Form.
+    """
+    if dm_email or generic_email:
+        return "Email"
+    if wa_url:
+        return "WhatsApp"
+    if phone_actionable:
+        return "Phone"
+    if fb_url or ig_url:
+        return "Social"
+    return "Web Form"
+
+
 def calculate_priority_score(lead: Dict[str, Any], audit_data: Dict[str, Any], config: Dict[str, Any]) -> float:
     """
     Computes priority score based on structured flaw_codes and verified outreach assets.
@@ -54,7 +131,6 @@ def calculate_priority_score(lead: Dict[str, Any], audit_data: Dict[str, Any], c
     """
     queue_cfg = config.get("queue", {})
     weights = queue_cfg.get("ranking_weights", {})
-    base_scores = queue_cfg.get("base_scores", {})
 
     score = 0.0
 
@@ -63,27 +139,8 @@ def calculate_priority_score(lead: Dict[str, Any], audit_data: Dict[str, Any], c
     for code in flaw_codes:
         score += weights.get(code, 0.0)
 
-    # 2. Verified contact bonuses
-    dm_email = sanitize_email(lead.get("dm_email"))
-    generic_email = sanitize_email(lead.get("generic_email"))
-    if dm_email or generic_email:
-        score += weights.get("has_email_bonus", 2.0)
-
-    line_type = sanitize_text(lead.get("line_type")) or "Unknown"
-    if line_type == "Mobile":
-        score += weights.get("has_mobile_phone_bonus", 1.5)
-    elif line_type == "Toll-Free":
-        score += base_scores.get("toll_free_penalty", -3.0)
-
-    # WhatsApp availability bonus
-    has_wa = bool(audit_data.get("is_whatsapp_active") or lead.get("whatsapp_url") or audit_data.get("whatsapp_url"))
-    if has_wa:
-        score += weights.get("has_whatsapp_bonus", 1.5)
-
-    # 3. Established review authority bonus
-    rev_count = lead.get("review_count") or 0
-    max_bonus = base_scores.get("max_review_bonus", 5.0)
-    score += min(max_bonus, rev_count * weights.get("review_count_factor", 0.02))
+    # 2. Verified contact bonuses & review authority bonus
+    score += _calculate_contact_and_review_bonuses(lead, audit_data, config)
 
     return round(max(0.0, score), 2)
 
@@ -122,6 +179,8 @@ def classify_lead(lead: Dict[str, Any], audit_data: Dict[str, Any], config: Dict
     fb_url = sanitize_url(lead.get("facebook_url"))
     ig_url = sanitize_url(lead.get("instagram_url"))
     wa_url = sanitize_url(lead.get("whatsapp_url")) or sanitize_url(audit_data.get("whatsapp_url"))
+    if not _has_verified_whatsapp(lead, audit_data):
+        wa_url = None
     line_type = sanitize_text(lead.get("line_type")) or "Unknown"
 
     # Toll-free qualification rule
@@ -146,19 +205,27 @@ def classify_lead(lead: Dict[str, Any], audit_data: Dict[str, Any], config: Dict
     is_unreachable = bool(audit_data.get("is_unreachable", False))
     flaw_codes = audit_data.get("flaw_codes", [])
 
+    primary_ch = _primary_channel_label(dm_email, generic_email, wa_url, phone_actionable, fb_url, ig_url)
+
     # Gate 3: Site Unreachable / Dead Domain
     if is_unreachable:
-        if phone_actionable:
-            score = base_scores.get("dead_domain_score", 5.0)
-            return "outreach_ready", "Dead Domain (Active Phone)", score
+        if has_actionable_contact:
+            bonuses = _calculate_contact_and_review_bonuses(lead, audit_data, config)
+            score = round(max(0.0, base_scores.get("dead_domain_score", 5.0) + bonuses), 2)
+            return "outreach_ready", f"Dead Domain ({primary_ch} Available)", score
         return "disqualified", "Dead Domain (No Contact)", 0.0
 
     # Gate 4: No Website (Path B)
     if not website_url:
-        if phone_actionable:
-            score = base_scores.get("no_website_score", 4.0)
-            return "outreach_ready", "No Website (Active Phone)", score
-        return "missing_info", "No Website & No Actionable Phone", 0.0
+        if has_actionable_contact:
+            bonuses = _calculate_contact_and_review_bonuses(lead, audit_data, config)
+            score = round(max(0.0, base_scores.get("no_website_score", 4.0) + bonuses), 2)
+            return "outreach_ready", f"No Website ({primary_ch} Available)", score
+        return "missing_info", "No Website & No Actionable Contact", 0.0
+
+    # Gate 4b: Render Incomplete / Unrendered Shell Check
+    if "render_incomplete" in flaw_codes:
+        return "missing_info", "Render Incomplete / Unrendered Shell (Manual Check Required)", 0.0
 
     # Gate 5: Healthy Website (Defect 2 Fix - Completed audit with 0 opportunity flaws)
     if not flaw_codes and not audit_data.get("failed_major_test", 0):
@@ -167,7 +234,6 @@ def classify_lead(lead: Dict[str, Any], audit_data: Dict[str, Any], config: Dict
     # Gate 6: Flawed Website / Host Challenge + Actionable Contact -> OUTREACH READY
     priority_score = calculate_priority_score(lead, audit_data, config)
     if has_actionable_contact:
-        primary_ch = "Email" if (dm_email or generic_email) else ("WhatsApp" if wa_url else ("Phone" if phone_actionable else ("Social" if (fb_url or ig_url) else "Web Form")))
         if "bot_challenge_gated" in flaw_codes:
             return "outreach_ready", f"Host Security Gated ({primary_ch} Available)", priority_score
         return "outreach_ready", f"Flawed Site ({primary_ch} Available)", priority_score

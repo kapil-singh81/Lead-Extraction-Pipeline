@@ -1,3 +1,4 @@
+import json
 import re
 import urllib.parse
 from typing import Dict, Any, Optional, List, Tuple
@@ -35,11 +36,31 @@ FLAW_LABEL_PATTERNS: List[Tuple[str, str]] = [
 ]
 
 
+def clean_city_name(raw_city: Optional[str]) -> str:
+    """
+    Cleans city string:
+    - Returns "" if empty/None (never falls back to a hardcoded city).
+    - Strips trailing 2-letter US state abbreviations (e.g. 'Dallas TX' -> 'Dallas', 'Austin, TX' -> 'Austin').
+    """
+    if not raw_city:
+        return ""
+    c = str(raw_city).strip()
+    if not c or c.lower() in {"none", "null", "undefined", "n/a"}:
+        return ""
+    state_pattern = re.compile(
+        r",?\s+\b(?:AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)\.?\s*$",
+        re.IGNORECASE
+    )
+    c = state_pattern.sub("", c).strip()
+    c = re.sub(r"[,;:\-–—]+$", "", c).strip()
+    return c
+
+
 def clean_contractor_name(raw_name: Optional[str]) -> str:
     """
     Cleans contractor business names for natural, conversational outreach:
     1. Splits on location / tagline separators ('|', '–', '—', or ' - ') and keeps the primary brand name.
-    2. Strips legal suffixes (LLC, Inc, Corp, Co, Ltd) from the primary name.
+    2. Strips legal suffixes (LLC, Inc, Corp, Co, Ltd) strictly at end of string in a loop.
     3. Preserves clean geographical brand names without separators (e.g. 'Bare Roofing Dallas').
     """
     if not raw_name:
@@ -51,9 +72,13 @@ def clean_contractor_name(raw_name: Optional[str]) -> str:
     if parts and parts[0].strip():
         name = parts[0].strip()
 
-    # 2. Strip legal suffixes at end: LLC, Inc, Corp, Co, Ltd
-    pattern = r",?\s+\b(LLC|L\.L\.C|Inc|Corp|Co|Ltd)\b\.?"
-    name = re.sub(pattern, "", name, flags=re.IGNORECASE).strip()
+    # 2. Strip legal suffixes anchored to end of string in a loop: LLC, Inc, Corp, Co, Ltd
+    suffix_pat = re.compile(r",?\s+\b(?:L\.L\.C\.?|LLC|Inc\.?|Corp\.?|Co\.?|Ltd\.?)\.?\s*$", re.IGNORECASE)
+    while True:
+        updated = suffix_pat.sub("", name).strip()
+        if updated == name:
+            break
+        name = updated
 
     # 3. Clean any trailing punctuation left over
     name = re.sub(r"[,;:\-–—]+$", "", name).strip()
@@ -110,16 +135,16 @@ def get_flaw_variants(flaw_code: Optional[str], audit: Optional[Dict[str, Any]] 
                 "router": f"mobile load time is hitting ~{sec_int}s",
                 "contrast": f"the site takes ~{sec_int} seconds to open while people are comparing local options",
                 "preview_hook": f"Site took ~{sec_int}s to load on mobile",
-                "business_effect": "Most people hit back after 3 seconds and call the next listing on Google."
+                "business_effect": "Most people hit back after 3 seconds and call the next listing."
             }
         return {
             "curiosity": "take that long to load",
             "direct": "it took a long time to open",
             "impact": "a long blank wait",
-            "router": "mobile site is loading really slowly",
+            "router": "mobile site is loading slowly",
             "contrast": "the site drags while people are comparing local options",
             "preview_hook": "Site took forever to load on mobile",
-            "business_effect": "Most people hit back after 3 seconds and call the next listing on Google."
+            "business_effect": "Most people hit back after 3 seconds and call the next listing."
         }
 
     elif code in ("server_delay", "high_ttfb"):
@@ -131,7 +156,7 @@ def get_flaw_variants(flaw_code: Optional[str], audit: Optional[Dict[str, Any]] 
                 "router": "the site stalls for a few seconds before loading",
                 "contrast": f"the site stalls for ~{ttfb_sec} seconds before loading when people tap your listing",
                 "preview_hook": f"Site hung ~{ttfb_sec}s before loading",
-                "business_effect": "People assume the site is down and tap the next listing on Google."
+                "business_effect": "People assume the site is down and tap the next listing."
             }
         return {
             "curiosity": "hang for a few seconds before loading",
@@ -140,7 +165,7 @@ def get_flaw_variants(flaw_code: Optional[str], audit: Optional[Dict[str, Any]] 
             "router": "the site stalls for a few seconds before loading",
             "contrast": "the site stalls for a few seconds before loading when people tap your listing",
             "preview_hook": "Site stalled before loading on mobile",
-            "business_effect": "People assume the site is down and tap the next listing on Google."
+            "business_effect": "People assume the site is down and tap the next listing."
         }
 
     elif code == "broken_mobile":
@@ -157,7 +182,7 @@ def get_flaw_variants(flaw_code: Optional[str], audit: Optional[Dict[str, Any]] 
     elif code == "unclickable_phone":
         return {
             "curiosity": "have a phone number you can't tap to call",
-            "direct": "tapping the phone number doesn't actually dial",
+            "direct": "tapping the phone number doesn't dial",
             "impact": "an unclickable phone number",
             "router": "phone number isn't set up as tap-to-call",
             "contrast": "people can't tap your number to call straight from Google",
@@ -194,7 +219,7 @@ def get_flaw_variants(flaw_code: Optional[str], audit: Optional[Dict[str, Any]] 
                 "direct": f"the homepage loads ~{mb_int}MB and drags hard",
                 "impact": f"a ~{mb_int}MB page that crawls on cellular",
                 "router": f"mobile page weight is around {mb_int}MB",
-                "contrast": f"the mobile page weighs ~{mb_int}MB and drags on cellular data",
+                "contrast": f"the mobile page weighs ~{mb_int}MB and drags on mobile",
                 "preview_hook": f"Homepage is ~{mb_int}MB on mobile",
                 "business_effect": "People on cellular data give up waiting and pick the next listing."
             }
@@ -203,7 +228,7 @@ def get_flaw_variants(flaw_code: Optional[str], audit: Optional[Dict[str, Any]] 
             "direct": "the homepage is super heavy and drags hard",
             "impact": "a bloated page that crawls on cellular",
             "router": "mobile page weight is unusually heavy",
-            "contrast": "the mobile page is heavy and drags on cellular",
+            "contrast": "the mobile page is heavy and drags on mobile",
             "preview_hook": "Homepage is way too heavy on mobile",
             "business_effect": "People on cellular data give up waiting and pick the next listing."
         }
@@ -263,13 +288,29 @@ def get_flaw_variants(flaw_code: Optional[str], audit: Optional[Dict[str, Any]] 
     }
 
 
+def _resolve_lead_audit(lead: Dict[str, Any]) -> Dict[str, Any]:
+    """Resolves unpacked audit dictionary from lead['audit'] or lead['audit_json']."""
+    audit = lead.get("audit")
+    if audit and isinstance(audit, dict):
+        return audit
+    audit_raw = lead.get("audit_json")
+    if audit_raw and isinstance(audit_raw, str):
+        try:
+            return json.loads(audit_raw)
+        except Exception:
+            return {}
+    elif isinstance(audit_raw, dict):
+        return audit_raw
+    return {}
+
+
 def get_highest_priority_flaw(lead: Dict[str, Any]) -> Tuple[Optional[str], Optional[Dict[str, str]]]:
     """
     Identifies the single highest-priority verified flaw for a live website
     and formats its 5 tailored sentence variants.
     Returns: (chosen_flaw_code, variants_dict) or (None, None) if 0 verified flaws exist.
     """
-    audit = lead.get("audit") or {}
+    audit = _resolve_lead_audit(lead)
     flaw_codes = [str(c).strip().lower() for c in (audit.get("flaw_codes") or [])]
     flaw_labels = [str(l).strip().lower() for l in (audit.get("flaw_labels") or [])]
     status_reason = str(lead.get("status_reason") or "").lower()
@@ -334,7 +375,7 @@ def generate_pitches(lead: Dict[str, Any]) -> Dict[str, Any]:
     Zero em-dashes, zero links.
     """
     biz_name = clean_contractor_name(lead.get("business_name"))
-    city = lead.get("city") or "Dallas"
+    city = clean_city_name(lead.get("city"))
 
     # Niche-agnostic category handling
     raw_niche = (lead.get("niche") or lead.get("category") or "").strip().lower()
@@ -345,45 +386,43 @@ def generate_pitches(lead: Dict[str, Any]) -> Dict[str, Any]:
     else:
         niche = raw_niche
 
-    if city.lower() in biz_name.lower():
+    if not city or city.lower() in biz_name.lower():
         city_prefix = ""
         city_or_local = "local"
         loc_str = ""
+        city_niche = f"local {niche} listings" if niche else "local listings"
     else:
         city_prefix = f"{city} "
         city_or_local = city
         loc_str = f" in {city}"
-
-    if niche:
-        city_niche = f"{city_prefix}{niche} listings"
-    else:
-        city_niche = "local listings"
+        city_niche = f"{city_prefix}{niche} listings" if niche else f"{city} listings"
 
     rating_val = lead.get("rating")
     rating_str = f"{rating_val:.1f}" if (isinstance(rating_val, (int, float)) and rating_val > 0) else "5.0"
     reviews_count = lead.get("review_count") or 0
 
     has_website_url = bool(lead.get("website_url"))
-    audit = lead.get("audit") or {}
+    audit = _resolve_lead_audit(lead)
     flaw_codes = [str(c).strip().lower() for c in (audit.get("flaw_codes") or [])]
     flaw_labels = [str(l).strip().lower() for l in (audit.get("flaw_labels") or [])]
     status_reason = str(lead.get("status_reason") or "").lower()
 
     # Determine site category branch
-    is_no_website = (
-        "no_website" in flaw_codes or
-        "no website" in status_reason or
-        any("no website" in l for l in flaw_labels) or
-        (not has_website_url and "dead_domain" not in flaw_codes and "dead domain" not in status_reason)
+    is_dead_domain = (
+        bool(audit.get("is_unreachable")) or
+        "dead_domain" in flaw_codes or
+        "dead domain" in status_reason or
+        any("dead domain" in l for l in flaw_labels) or
+        "dns failure" in status_reason or
+        "inaccessible" in status_reason
     )
 
-    is_dead_domain = (
-        not is_no_website and (
-            "dead_domain" in flaw_codes or
-            "dead domain" in status_reason or
-            any("dead domain" in l for l in flaw_labels) or
-            "dns failure" in status_reason or
-            "inaccessible" in status_reason
+    is_no_website = (
+        not is_dead_domain and (
+            "no_website" in flaw_codes or
+            "no website" in status_reason or
+            any("no website" in l for l in flaw_labels) or
+            not has_website_url
         )
     )
 
@@ -603,7 +642,24 @@ def generate_pitches(lead: Dict[str, Any]) -> Dict[str, Any]:
     # Channel-aware smart recommendation
     has_dm_email = bool(lead.get("dm_email"))
     phone_val = lead.get("clean_phone") or lead.get("phone")
-    has_valid_phone = bool(phone_val and len(re.sub(r"\D", "", phone_val)) >= 10)
+
+    # Treat phone as non-direct if line_type is Toll-Free or NANPA area code is Toll-Free
+    is_toll_free = False
+    line_type = (lead.get("line_type") or "").strip().lower()
+    if line_type == "toll-free":
+        is_toll_free = True
+    elif phone_val:
+        p_digits = re.sub(r"\D", "", str(phone_val))
+        if len(p_digits) == 11 and p_digits.startswith("1"):
+            p_area = p_digits[1:4]
+        elif len(p_digits) == 10:
+            p_area = p_digits[:3]
+        else:
+            p_area = ""
+        if p_area in {"800", "833", "844", "855", "866", "877", "888"}:
+            is_toll_free = True
+
+    has_valid_phone = bool(phone_val and len(re.sub(r"\D", "", str(phone_val))) >= 10 and not is_toll_free)
     has_form_or_gen_only = (bool(lead.get("form_url")) or bool(lead.get("generic_email"))) and not has_dm_email and not has_valid_phone
 
     if has_form_or_gen_only:
@@ -629,7 +685,7 @@ def generate_pitches(lead: Dict[str, Any]) -> Dict[str, Any]:
         "accusation_audit": {"title": "Accusation", "psychology": "Call Out the Elephant (Voss)"},
         "no_oriented": {"title": "No-Oriented", "psychology": "Autonomy & Protection (Voss)"},
         "local_contrast": {"title": "Local Contrast", "psychology": "Competitor Context in City"},
-        "reputation_dissonance": {"title": "Reputation", "psychology": "5-Star Standard vs Mobile Slag"},
+        "reputation_dissonance": {"title": "Reputation", "psychology": "5-Star Standard vs Mobile Lag"},
         "gatekeeper": {"title": "Gatekeeper", "psychology": "Neutral Referral & Route to Site Admin"},
         "reciprocity": {"title": "Reciprocity", "psychology": "Upfront Value & 2-Step Fix"}
     }

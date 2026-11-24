@@ -30,6 +30,12 @@ def test_classifier():
     assert classifier.sanitize_email("contact@acme.com") == "contact@acme.com"
     assert classifier.sanitize_email("not-an-email") is None
     assert classifier.sanitize_email("logo.png") is None
+    assert classifier.sanitize_email("banner.jpg") is None
+    assert classifier.sanitize_email("photo.jpeg") is None
+    assert classifier.sanitize_email("icon.svg") is None
+    assert classifier.sanitize_email("loader.gif") is None
+    assert classifier.sanitize_email("bundle.js") is None
+    assert classifier.sanitize_email("styles.css") is None
 
     assert classifier.sanitize_url("None") is None
     assert classifier.sanitize_url("https://acme.com/contact") == "https://acme.com/contact"
@@ -124,7 +130,9 @@ def test_classifier():
         "line_type": "Local (US)"
     }
     st, r, sc = classifier.classify_lead(lead_dead_phone, audit_dead, CONFIG)
-    assert st == "outreach_ready" and "Dead Domain" in r
+    assert st == "outreach_ready"
+    assert r == "Dead Domain (Phone Available)"
+    assert sc == 5.0
 
     # 9. Gate: Path B (No Website) + Active Phone
     print("--> Test 9: No website + active phone...")
@@ -135,7 +143,9 @@ def test_classifier():
         "line_type": "Mobile"
     }
     st, r, sc = classifier.classify_lead(lead_no_site, {"audit_completed": True}, CONFIG)
-    assert st == "outreach_ready" and "No Website" in r
+    assert st == "outreach_ready"
+    assert r == "No Website (Phone Available)"
+    assert sc == 5.5  # 4.0 base + 1.5 mobile phone bonus
 
     # 10. Gate: Flawed Website + Instagram Direct Contact Passes
     print("--> Test 10: Instagram URL qualifies as actionable contact channel...")
@@ -149,17 +159,29 @@ def test_classifier():
     assert st == "outreach_ready", f"Expected 'outreach_ready', got '{st}'"
     assert "Social Available" in r
 
-    # 11. Gate: Flawed Website + WhatsApp URL -> Outreach Ready (Primary Channel WhatsApp)
-    print("--> Test 11: WhatsApp URL qualifies as actionable contact channel...")
-    lead_wa = {
+    # 11. Gate: Flawed Website + WhatsApp URL alone does NOT qualify without verified contact
+    print("--> Test 11: WhatsApp URL alone does not bypass qualification without verified contact...")
+    lead_wa_alone = {
         "business_name": "Elite Roofing Pros",
         "website_url": "https://eliteroofingpros.com",
         "clean_phone": None,
         "whatsapp_url": "https://wa.me/12145550188"
     }
-    st, r, sc = classifier.classify_lead(lead_wa, audit_flawed, CONFIG)
-    assert st == "outreach_ready", f"Expected 'outreach_ready', got '{st}'"
-    assert "WhatsApp Available" in r, f"Expected 'WhatsApp Available' in reason, got '{r}'"
+    st_alone, r_alone, sc_alone = classifier.classify_lead(lead_wa_alone, audit_flawed, CONFIG)
+    assert st_alone == "missing_info", f"Expected 'missing_info', got '{st_alone}'"
+    assert "Missing Actionable Contact" in r_alone
+
+    # But with an actionable contact (e.g. generic_email or clean_phone), it qualifies as outreach_ready
+    lead_wa_actionable = {
+        "business_name": "Elite Roofing Pros",
+        "website_url": "https://eliteroofingpros.com",
+        "generic_email": "contact@eliteroofingpros.com",
+        "clean_phone": None,
+        "whatsapp_url": "https://wa.me/12145550188"
+    }
+    st_act, r_act, sc_act = classifier.classify_lead(lead_wa_actionable, audit_flawed, CONFIG)
+    assert st_act == "outreach_ready", f"Expected 'outreach_ready', got '{st_act}'"
+    assert "Email Available" in r_act or "WhatsApp Available" in r_act
 
     # 12. Scoring: WhatsApp Bonus is dynamically added
     print("--> Test 12: Priority score includes has_whatsapp_bonus...")

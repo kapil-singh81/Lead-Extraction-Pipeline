@@ -1447,7 +1447,10 @@ def process_no_website_leads(config: Dict[str, Any]) -> int:
 async def run_site_auditor(config, re_audit: bool = False, lead_id: Optional[int] = None) -> None:
     """Main executor to run parallel site audits on pending leads or re-audit existing leads."""
     if isinstance(config, str):
-        with open(config, "r", encoding="utf-8") as f:
+        cfg_path = config
+        if not os.path.isabs(cfg_path) and not os.path.exists(cfg_path):
+            cfg_path = os.path.join(PROJECT_ROOT, cfg_path)
+        with open(cfg_path, "r", encoding="utf-8") as f:
             config = json.load(f)
 
     db_path = config["app"]["db_path"]
@@ -1528,7 +1531,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     async def _standalone_run():
-        with open(args.config, "r", encoding="utf-8") as f:
+        cfg_path = args.config
+        if not os.path.isabs(cfg_path) and not os.path.exists(cfg_path):
+            cfg_path = os.path.join(PROJECT_ROOT, cfg_path)
+        with open(cfg_path, "r", encoding="utf-8") as f:
             cfg = json.load(f)
         await run_site_auditor(cfg, re_audit=args.re_audit, lead_id=args.lead_id)
 

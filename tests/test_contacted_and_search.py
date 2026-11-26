@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import pytest
@@ -5,15 +6,101 @@ from starlette.testclient import TestClient
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+import dashboard
 from core import database
-from core.pitch_generator import generate_pitches, translate_flaw
-from dashboard import app
+from core.pitch_generator import generate_pitches
 
 
-def test_omni_search_and_filters():
+@pytest.fixture
+def isolated_db(tmp_path, monkeypatch):
+    """Creates an isolated SQLite database seeded with lead #51 and a contacted lead."""
+    db_path = str(tmp_path / "test_contacted_search.db")
+    database.init_db(db_path)
+
+    real_cfg = dashboard.load_config()
+    cfg_copy = json.loads(json.dumps(real_cfg))
+    cfg_copy["app"]["db_path"] = db_path
+    monkeypatch.setattr(dashboard, "load_config", lambda *args, **kwargs: cfg_copy)
+
+    conn = database.get_connection(db_path)
+    try:
+        with conn:
+            conn.execute(
+                """
+                INSERT INTO leads (
+                    id, place_id, business_name, niche, city, country,
+                    website_url, clean_domain, phone, clean_phone, line_type,
+                    facebook_url, rating, review_count, status, status_reason,
+                    priority_score, audit_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    51,
+                    "ChIJ_test_lead_51",
+                    "Storm Shield Roofing",
+                    "Roofing",
+                    "Dallas",
+                    "US",
+                    "https://stormshieldroofing.example.com",
+                    "stormshieldroofing.example.com",
+                    "(817) 764-5775",
+                    "+18177645775",
+                    "Mobile",
+                    "https://facebook.com/stormshieldroofing",
+                    4.9,
+                    48,
+                    "outreach_ready",
+                    "Flawed Site (Phone Available)",
+                    82.5,
+                    json.dumps({
+                        "audit_completed": True,
+                        "has_website": True,
+                        "flaw_codes": ["broken_mobile"],
+                        "flaw_labels": ["Broken Mobile Layout (Horizontal Overflow)"],
+                    }),
+                ),
+            )
+    finally:
+        conn.close()
+
+    # Seed a contacted lead so contacted page and stats always have realistic history
+    contacted_id = database.insert_lead(
+        {
+            "place_id": "ChIJ_test_contacted_52",
+            "business_name": "Metro Crest Roofers",
+            "niche": "Roofing",
+            "city": "Fort Worth",
+            "country": "US",
+            "clean_phone": "+12145550188",
+            "line_type": "Mobile",
+            "rating": 4.8,
+            "review_count": 30,
+            "status": "outreach_ready",
+            "priority_score": 70.0,
+            "audit_json": json.dumps({
+                "audit_completed": True,
+                "has_website": True,
+                "flaw_codes": ["slow_load"],
+                "flaw_labels": ["Slow Load (7.2s)"],
+            }),
+        },
+        db_path=db_path,
+    )
+    database.log_outreach(
+        lead_id=contacted_id,
+        channel="whatsapp",
+        outcome="sent",
+        message_sent="[naive_curiosity] Quick question",
+        db_path=db_path,
+    )
+
+    return db_path
+
+
+def test_omni_search_and_filters(isolated_db):
     """Verifies that database.get_leads_master searches across all lead fields."""
-    db_path = "data/lead_pipeline.db"
-    
+    db_path = isolated_db
+
     # 1. Search by name
     leads, total = database.get_leads_master(search="Storm", db_path=db_path)
     assert total > 0
@@ -32,8 +119,7 @@ def test_omni_search_and_filters():
     database.update_lead_fields(51, {"whatsapp_url": "https://wa.me/18177645775"}, db_path=db_path)
     leads, total = database.get_leads_master(channel="whatsapp", db_path=db_path)
     assert total > 0
-    from dashboard import unpack_audit
-    unpacked = [unpack_audit(l) for l in leads]
+    unpacked = [dashboard.unpack_audit(l, db_path=db_path) for l in leads]
     assert all(bool(l["whatsapp_url"]) for l in unpacked)
     database.update_lead_fields(51, {"whatsapp_url": None}, db_path=db_path)
 
@@ -43,10 +129,10 @@ def test_omni_search_and_filters():
     assert all(l["rating"] is not None and l["rating"] >= 4.8 for l in leads)
 
 
-def test_contacted_leads_and_stats():
+def test_contacted_leads_and_stats(isolated_db):
     """Verifies retrieval of contacted leads with history and KPI stats."""
-    db_path = "data/lead_pipeline.db"
-    
+    db_path = isolated_db
+
     stats = database.get_contacted_stats(db_path=db_path)
     assert "total" in stats
     assert "whatsapp" in stats
@@ -54,8 +140,8 @@ def test_contacted_leads_and_stats():
     assert "email" in stats
     assert "form" in stats
     assert "facebook" in stats
-    assert stats["total"] >= 0
-    assert stats["whatsapp"] >= 0
+    assert stats["total"] >= 1
+    assert stats["whatsapp"] >= 1
     assert stats["facebook"] >= 0
     breakdown_sum = (
         stats["whatsapp"] + stats["phone"] + stats["email"] +
@@ -64,32 +150,30 @@ def test_contacted_leads_and_stats():
     assert stats["total"] == breakdown_sum
 
     contacted_leads, total = database.get_contacted_leads_with_history(db_path=db_path)
-    assert total >= 0
-    if total > 0:
-        lead = contacted_leads[0]
-        assert "last_channel" in lead
-        assert "contacted_at" in lead
+    assert total >= 1
+    lead = contacted_leads[0]
+    assert "last_channel" in lead
+    assert "contacted_at" in lead
 
 
-def test_no_oob_in_lead_card():
+def test_no_oob_in_lead_card(isolated_db):
     """Verifies that GET /api/leads/{id}/card returns ONLY the card without out-of-band swaps."""
-    client = TestClient(app)
-    
-    # Fetch lead card partial for lead 51
+    client = TestClient(dashboard.app)
+
     resp = client.get("/api/leads/51/card", headers={"HX-Request": "true"})
     assert resp.status_code == 200
     html = resp.text
-    
+
     # Must NOT contain out-of-band swap wrappers inside lead card
     assert 'id="sidebar-counts" hx-swap-oob="true"' not in html
     assert 'id="queue-tiles-container" hx-swap-oob="true"' not in html
     assert 'id="progress-tracker" hx-swap-oob="true"' not in html
 
 
-def test_action_response_has_oob():
+def test_action_response_has_oob(isolated_db):
     """Verifies that POST /api/leads/{id}/action returns action_response with proper OOB swaps."""
-    client = TestClient(app)
-    
+    client = TestClient(dashboard.app)
+
     resp = client.post(
         "/api/leads/51/action",
         data={"action": "contacted", "channel": "whatsapp"},
@@ -97,17 +181,17 @@ def test_action_response_has_oob():
     )
     assert resp.status_code == 200
     html = resp.text
-    
+
     # Must contain OOB swap wrappers for sidebar and queue
     assert 'id="sidebar-counts" hx-swap-oob="true"' in html
     assert 'id="queue-tiles-container" hx-swap-oob="true"' in html
     assert 'id="progress-tracker" hx-swap-oob="true"' in html
 
 
-def test_contacted_page_endpoint():
+def test_contacted_page_endpoint(isolated_db):
     """Verifies that the /contacted route renders successfully with KPIs, view toggles, and individual cards."""
-    client = TestClient(app)
-    
+    client = TestClient(dashboard.app)
+
     # 1. Table view
     resp = client.get("/contacted?view=table")
     assert resp.status_code == 200
@@ -123,7 +207,6 @@ def test_contacted_page_endpoint():
     assert resp_grid.status_code == 200
     assert "all-cards-grid" in resp_grid.text
     assert "Table View" in resp_grid.text
-    # Individual card components must be present in grid mode
     assert "lead-card" in resp_grid.text or "No Contacted Leads Found" in resp_grid.text
 
 
@@ -147,14 +230,14 @@ def test_multi_flaw_and_spacious_message():
             ]
         }
     }
-    
+
     pitches = generate_pitches(lead_with_6_flaws)
     flaw = pitches["specific_flaw"]
-    
+
     # Top conversion flaw must take precedence over thin architecture and be single highest priority
     assert "barely explains" not in flaw
     assert "the layout cuts off sideways on my phone" in flaw
-    
+
     # Check spacious formatting: all scripts must have paragraph breaks (\n\n)
     for key, app_dict in pitches["approaches"].items():
         text = app_dict["text"]
@@ -165,11 +248,10 @@ def test_multi_flaw_and_spacious_message():
         assert "http" not in text
 
 
-def test_database_update_lead_fields():
+def test_database_update_lead_fields(isolated_db):
     """Verifies arbitrary field correction and clean domain/phone formatting in database."""
-    db_path = "data/lead_pipeline.db"
-    
-    # Update lead 51
+    db_path = isolated_db
+
     updated = database.update_lead_fields(
         lead_id=51,
         fields={
@@ -187,10 +269,10 @@ def test_database_update_lead_fields():
     assert updated["manual_notes"] == "Verified decision maker via phone inspection"
 
 
-def test_lead_update_api():
+def test_lead_update_api(isolated_db):
     """Verifies that POST /api/leads/{id}/update saves data and returns updated card."""
-    client = TestClient(app)
-    
+    client = TestClient(dashboard.app)
+
     resp = client.post(
         "/api/leads/51/update",
         data={
@@ -207,10 +289,14 @@ def test_lead_update_api():
     assert "Lead details updated and saved to SQLite!" in unescaped
 
 
-def test_status_action_stay_mode():
+def test_status_action_stay_mode(isolated_db):
     """Verifies that submitting an outreach action with stay='true' updates status without moving away."""
-    client = TestClient(app)
-    
+    client = TestClient(dashboard.app)
+
+    client.post(
+        "/api/leads/51/update",
+        data={"business_name": "CSI Commercial Renovations & Roofing"},
+    )
     resp = client.post(
         "/api/leads/51/action",
         data={
@@ -223,40 +309,40 @@ def test_status_action_stay_mode():
     )
     import html
     assert resp.status_code == 200
-    # Must stay on lead 51 and show success message
     assert 'id="lead-card-51"' in resp.text
     unescaped = html.unescape(resp.text)
     assert "Status updated to 'Contacted'" in unescaped
     assert "CSI Commercial Renovations & Roofing" in unescaped
 
 
-def test_lead_card_contains_edit_and_clean_dossier():
+def test_lead_card_contains_edit_and_clean_dossier(isolated_db):
     """Verifies that the main lead card has edit trigger and add-channel button, while dossier telemetry and edit notice are removed."""
-    client = TestClient(app)
-    
+    client = TestClient(dashboard.app)
+
     resp = client.get("/api/leads/51/card")
     assert resp.status_code == 200
     html = resp.text
-    
-    # Edit data freedom elements (pencil icon only, edit panel present, notice removed)
+
     assert "btn-edit-trigger" in html
     assert 'id="edit-panel-51"' in html
     assert "Edit Mode Active:" not in html
     assert 'action="/api/leads/51/update"' in html or 'hx-post="/api/leads/51/update"' in html
-    
-    # Digital channels + button present
+
     assert "btn-add-channel-plus" in html
     assert "add-channel-box-51" in html
 
-    # Outreach Channel & Status Management is removed from main queue card
     assert 'id="sel-channel-51"' not in html
-    
-    # Complete Lead Details & Technical Telemetry is removed from main card
     assert "Complete Lead Details & Technical Telemetry" not in html
     assert 'id="dossier-body-51"' not in html
     assert "Deep Technical Audit Telemetry" not in html
-    
-    # But Outreach Channel & Status Management is present on Contacted Page individual lead drawer
+
+    database.log_outreach(
+        lead_id=51,
+        channel="whatsapp",
+        outcome="sent",
+        message_sent="[naive_curiosity] Initial check",
+        db_path=isolated_db,
+    )
     resp_drawer = client.get("/api/leads/51/modal")
     assert resp_drawer.status_code == 200
     assert "Outreach Channel & Status Management" in resp_drawer.text
@@ -266,22 +352,19 @@ def test_lead_card_contains_edit_and_clean_dossier():
     assert "btn-delete-log" in resp_drawer.text
 
 
-def test_whatsapp_channel_toggle():
+def test_whatsapp_channel_toggle(isolated_db):
     """Verifies that WhatsApp channel can be dynamically added/removed via Digital Channels toggle and 1-click WhatsApp buttons persist."""
-    client = TestClient(app)
-    db_path = "data/lead_pipeline.db"
-    
-    # 1. Reset lead 51 to have no on-site whatsapp_url
+    client = TestClient(dashboard.app)
+    db_path = isolated_db
+
     database.update_lead_fields(51, {"whatsapp_url": None}, db_path=db_path)
-    
-    # 2. Fetch card: Digital Web Channels should have '+ WhatsApp' button, and 1-click action should have 'Open WhatsApp ↗' and 'WB Sent'
+
     resp = client.get("/api/leads/51/card")
     assert resp.status_code == 200
     assert "+ WhatsApp" in resp.text
     assert "Open WhatsApp ↗" in resp.text
     assert "WB Sent" in resp.text
 
-    # 3. Toggle ON via API
     resp_on = client.post("/api/leads/51/toggle-whatsapp")
     assert resp_on.status_code == 200
     assert "Remove WhatsApp as an active channel" in resp_on.text
@@ -289,73 +372,50 @@ def test_whatsapp_channel_toggle():
     assert "WB Sent" in resp_on.text
     assert "wa.me" in resp_on.text
 
-    # Verify database updated
     l = database.get_lead_by_id(51, db_path=db_path)
     assert l["whatsapp_url"] is not None and "wa.me" in l["whatsapp_url"]
 
-    # 4. Toggle OFF via API
     resp_off = client.post("/api/leads/51/toggle-whatsapp")
     assert resp_off.status_code == 200
     assert "+ WhatsApp" in resp_off.text
     assert "Open WhatsApp ↗" in resp_off.text
 
-    # Verify database reset to NULL
     l_off = database.get_lead_by_id(51, db_path=db_path)
     assert l_off["whatsapp_url"] is None
 
 
-def test_facebook_action_and_channel_filter():
+def test_facebook_action_and_channel_filter(isolated_db):
     """Verifies marking lead contacted via Facebook, logging outreach, and filtering by Facebook."""
-    client = TestClient(app)
-    db_path = "data/lead_pipeline.db"
+    client = TestClient(dashboard.app)
+    db_path = isolated_db
     test_lead_id = 51
 
-    # Check UI rendering of FB Sent in lead card
     resp_card = client.get(f"/api/leads/{test_lead_id}/card")
     assert resp_card.status_code == 200
     assert "FB Sent" in resp_card.text
 
-    # Save original state of lead
-    orig_lead = database.get_lead_by_id(test_lead_id, db_path=db_path)
+    resp = client.post(
+        f"/api/leads/{test_lead_id}/mark-facebook",
+        data={
+            "pitch_type": "naive_curiosity",
+            "message_text": "Is it by design that your contact button cuts off on mobile?",
+            "notes": "Testing Facebook outreach",
+            "stay": "true"
+        },
+        headers={"HX-Request": "true"}
+    )
+    assert resp.status_code == 200
 
-    try:
-        # 1. Post mark-facebook endpoint
-        resp = client.post(
-            f"/api/leads/{test_lead_id}/mark-facebook",
-            data={
-                "pitch_type": "naive_curiosity",
-                "message_text": "Is it by design that your contact button cuts off on mobile?",
-                "notes": "Testing Facebook outreach",
-                "stay": "true"
-            },
-            headers={"HX-Request": "true"}
-        )
-        assert resp.status_code == 200
+    updated_lead = database.get_lead_by_id(test_lead_id, db_path=db_path)
+    assert updated_lead["status"] == "contacted"
+    assert "facebook" in updated_lead["status_reason"].lower()
 
-        # Check database update
-        updated_lead = database.get_lead_by_id(test_lead_id, db_path=db_path)
-        assert updated_lead["status"] == "contacted"
-        assert "facebook" in updated_lead["status_reason"].lower()
+    history = database.get_lead_outreach_history(test_lead_id, db_path=db_path)
+    assert any(h["channel"].lower() == "facebook" for h in history)
 
-        # Check outreach history
-        history = database.get_lead_outreach_history(test_lead_id, db_path=db_path)
-        assert any(h["channel"].lower() == "facebook" for h in history)
-
-        # 2. Check /contacted?channel=facebook view
-        resp_fb = client.get("/contacted?channel=facebook")
-        assert resp_fb.status_code == 200
-        assert "Facebook" in resp_fb.text
-    finally:
-        # Clean up test outreach log entries for test_lead_id with channel 'facebook'
-        conn = database.get_connection(db_path)
-        with conn:
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM outreach_log WHERE lead_id = ? AND LOWER(channel) = 'facebook'", (test_lead_id,))
-            cursor.execute(
-                "UPDATE leads SET status = ?, status_reason = ? WHERE id = ?",
-                (orig_lead["status"], orig_lead["status_reason"], test_lead_id)
-            )
-        conn.close()
+    resp_fb = client.get("/contacted?channel=facebook")
+    assert resp_fb.status_code == 200
+    assert "Facebook" in resp_fb.text
 
 
 def test_contacted_table_multi_channel_icons_and_reply_analytics(tmp_path, monkeypatch):
@@ -364,9 +424,7 @@ def test_contacted_table_multi_channel_icons_and_reply_analytics(tmp_path, monke
     1. Contacted table shows icon-only badges for all contacted platforms + single latest timestamp + distinct Direct Contact Info.
     2. Changing outcome from sent to replied on one channel credits +1 only to that channel and its strategy in reply analytics.
     """
-    import json
     import re
-    import dashboard
 
     test_db = str(tmp_path / "test_multi_ch_replies.db")
     database.init_db(test_db)
@@ -387,12 +445,10 @@ def test_contacted_table_multi_channel_icons_and_reply_analytics(tmp_path, monke
         "priority_score": 85.0,
     }, db_path=test_db)
 
-    # Log 3 distinct platforms with 3 distinct strategies
     id_form = database.log_outreach(lead_id, "form", outcome="sent", message_sent="[local_contrast] Form pitch", db_path=test_db)
     id_email = database.log_outreach(lead_id, "email", outcome="sent", message_sent="[naive_curiosity] Email pitch", db_path=test_db)
     id_fb = database.log_outreach(lead_id, "facebook", outcome="sent", message_sent="[accusation_audit] FB pitch", db_path=test_db)
 
-    # Ensure deterministic ordering (facebook newest)
     conn = database.get_connection(test_db)
     with conn:
         conn.execute("UPDATE outreach_log SET sent_at = '2026-11-24 10:00:00' WHERE id = ?", (id_form,))
@@ -400,9 +456,8 @@ def test_contacted_table_multi_channel_icons_and_reply_analytics(tmp_path, monke
         conn.execute("UPDATE outreach_log SET sent_at = '2026-11-24 12:00:00' WHERE id = ?", (id_fb,))
     conn.close()
 
-    client = TestClient(app)
+    client = TestClient(dashboard.app)
 
-    # 1. Table view shows all 3 icon-only badges, single latest timestamp, and Direct Contact Info
     resp_tbl = client.get("/contacted?view=table")
     assert resp_tbl.status_code == 200
     row_match = re.search(rf'<tr[^>]*id="row-contacted-{lead_id}".*?</tr>', resp_tbl.text, re.DOTALL)
@@ -417,7 +472,6 @@ def test_contacted_table_multi_channel_icons_and_reply_analytics(tmp_path, monke
     assert "owner@multichannelroofing.com" in row_html
     assert "+12145553344" in row_html
 
-    # 2. Mark replied specifically on 'email' (passing a different default pitch_type from drawer)
     resp_reply = client.post(
         f"/api/leads/{lead_id}/action",
         data={
@@ -432,7 +486,6 @@ def test_contacted_table_multi_channel_icons_and_reply_analytics(tmp_path, monke
     )
     assert resp_reply.status_code == 200
 
-    # 3. Verify analytics credits ONLY email (+1) and ONLY naive_curiosity (+1)
     resp_analytics = client.get("/api/analytics/replies")
     assert resp_analytics.status_code == 200
     analytics = resp_analytics.json()
@@ -446,7 +499,6 @@ def test_contacted_table_multi_channel_icons_and_reply_analytics(tmp_path, monke
     assert analytics["by_strategy"]["local_contrast"]["replied_leads"] == 0
     assert analytics["by_strategy"]["accusation_audit"]["replied_leads"] == 0
 
-    # 4. Saving notes again on email with outcome=replied must not double-count
     client.post(
         f"/api/leads/{lead_id}/action",
         data={
@@ -462,4 +514,3 @@ def test_contacted_table_multi_channel_icons_and_reply_analytics(tmp_path, monke
     assert analytics_after["total_replied_leads"] == 1
     assert analytics_after["by_channel"]["email"]["replied_leads"] == 1
     assert analytics_after["by_strategy"]["naive_curiosity"]["replied_leads"] == 1
-

@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+import sys
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -18,6 +19,8 @@ from core.pitch_generator import generate_pitches
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 BASE_DIR = Path(__file__).resolve().parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
 # Config & DB helpers with mtime-based in-memory caching
 _CONFIG_CACHE: Optional[Dict[str, Any]] = None
@@ -1102,5 +1105,57 @@ async def get_master_leads_view(
 
 
 if __name__ == "__main__":
+    import argparse
+    import socket
+    import threading
+    import time
+    import webbrowser
     import uvicorn
-    uvicorn.run("dashboard:app", host="127.0.0.1", port=8000, reload=True)
+
+    parser = argparse.ArgumentParser(description="Lead Extraction Verification Cockpit")
+    parser.add_argument("--host", default=os.environ.get("DASHBOARD_HOST", "127.0.0.1"))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("DASHBOARD_PORT", "8000")))
+    parser.add_argument("--open-browser", action="store_true", help="Open browser once server is listening")
+    parser.add_argument("--no-reload", action="store_true", help="Disable auto-reloader")
+    cli_args = parser.parse_args()
+
+    host = cli_args.host
+    port = cli_args.port
+    connect_host = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
+    should_open = cli_args.open_browser or os.environ.get("DASHBOARD_OPEN_BROWSER", "0").strip().lower() in {"1", "true", "yes"}
+    reload_flag = (not cli_args.no_reload) and os.environ.get("DASHBOARD_RELOAD", "true").strip().lower() in {"1", "true", "yes"}
+
+    def _is_port_open() -> bool:
+        try:
+            with socket.create_connection((connect_host, port), timeout=0.4):
+                return True
+        except OSError:
+            return False
+
+    if _is_port_open():
+        logging.info(f"Dashboard already running on http://{connect_host}:{port}")
+        if should_open:
+            webbrowser.open(f"http://{connect_host}:{port}")
+        sys.exit(0)
+
+    if should_open:
+        def _open_when_ready() -> None:
+            deadline = time.time() + 20.0
+            while time.time() < deadline:
+                if _is_port_open():
+                    webbrowser.open(f"http://{connect_host}:{port}")
+                    return
+                time.sleep(0.25)
+
+        threading.Thread(target=_open_when_ready, daemon=True).start()
+
+    uvicorn_kwargs = {
+        "host": host,
+        "port": port,
+        "app_dir": str(BASE_DIR),
+    }
+    if reload_flag:
+        uvicorn_kwargs["reload"] = True
+        uvicorn_kwargs["reload_dirs"] = [str(BASE_DIR)]
+        uvicorn_kwargs["reload_excludes"] = ["data/*", "venv/*", ".venv/*", "tests/*", "*.db", "*.db-wal", "*.db-shm"]
+    uvicorn.run("dashboard:app", **uvicorn_kwargs)

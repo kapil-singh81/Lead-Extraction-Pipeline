@@ -795,10 +795,57 @@ async def scrape_single_query(page: Page, query: str, config: dict, geo_coord: O
     return total_saved_for_query
 
 
+async def _launch_persistent_browser(
+    playwright_instance,
+    user_data_dir: str,
+    scraper_cfg: dict
+):
+    """
+    Launches a persistent Chromium context, preferring the configured browser channel
+    (e.g. 'chrome') and automatically falling back to Playwright's bundled Chromium
+    if the system browser distribution is not installed on the current device.
+    """
+    launch_kwargs = {
+        "user_data_dir": user_data_dir,
+        "headless": scraper_cfg.get("headless", False),
+        "args": scraper_cfg.get("launch_args", []),
+        "viewport": scraper_cfg.get("viewport", {"width": 1920, "height": 1080}),
+    }
+    channel = scraper_cfg.get("browser_channel")
+    if isinstance(channel, str):
+        channel = channel.strip() or None
+
+    if channel:
+        try:
+            return await playwright_instance.chromium.launch_persistent_context(
+                channel=channel,
+                **launch_kwargs
+            )
+        except Exception as channel_err:
+            err_lower = str(channel_err).lower()
+            lock_indicators = ("processsingleton", "already in use", "profile appears to be in use")
+            missing_indicators = (
+                "executable", "not found", "distribution", "cannot find",
+                "no such file", "does not exist", "channel", "failed to launch"
+            )
+            if not any(tok in err_lower for tok in lock_indicators) and any(tok in err_lower for tok in missing_indicators):
+                logging.warning(
+                    f"Configured browser_channel='{channel}' is unavailable on this device ({channel_err}). "
+                    "Falling back to Playwright bundled Chromium."
+                )
+                return await playwright_instance.chromium.launch_persistent_context(**launch_kwargs)
+            raise
+
+    return await playwright_instance.chromium.launch_persistent_context(**launch_kwargs)
+
+
 async def run_maps_scraper(config, run_id: Optional[int] = None) -> int:
     """Main executor for c1 Google Maps scraper. Accepts config dict or path string."""
     if isinstance(config, str):
-        with open(config, "r", encoding="utf-8") as f:
+        cfg_path = config
+        if not os.path.isabs(cfg_path) and not os.path.exists(cfg_path):
+            cfg_path = os.path.join(PROJECT_ROOT, cfg_path)
+        with open(cfg_path, "r", encoding="utf-8") as f:
             config = json.load(f)
 
     database.init_db(config["app"]["db_path"])
@@ -815,13 +862,7 @@ async def run_maps_scraper(config, run_id: Optional[int] = None) -> int:
 
     async with async_playwright() as p:
         logging.info("Launching Chrome Persistent Context for Maps extraction...")
-        context = await p.chromium.launch_persistent_context(
-            user_data_dir=resolved_user_data_dir,
-            channel=scraper_cfg.get("browser_channel", "chrome"),
-            headless=scraper_cfg.get("headless", False),
-            args=scraper_cfg.get("launch_args", []),
-            viewport=scraper_cfg.get("viewport", {"width": 1920, "height": 1080})
-        )
+        context = await _launch_persistent_browser(p, resolved_user_data_dir, scraper_cfg)
 
         page = context.pages[0] if context.pages else await context.new_page()
 
